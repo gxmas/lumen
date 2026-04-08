@@ -1,0 +1,99 @@
+cabal-version:      3.0
+name:               lumen
+version:            0.1.0.0
+synopsis:           Lumen Agent - A text-based agent with tool execution capability
+description:        Phase 1 implementation of the Lumen agent (code name "Dawn")
+license:            BSD-3-Clause
+author:             gnoel5
+maintainer:         gnoel5
+category:           Development
+build-type:         Simple
+
+common shared-properties
+    default-language: GHC2021
+    ghc-options:
+        -Wall
+        -Wcompat
+        -Widentities
+        -Wincomplete-record-updates
+        -Wincomplete-uni-patterns
+        -Wmissing-home-modules
+        -Wpartial-fields
+        -Wredundant-constraints
+        -Wunused-packages
+    default-extensions:
+        DerivingStrategies
+        DuplicateRecordFields
+        LambdaCase
+        OverloadedRecordDot
+        OverloadedStrings
+
+library
+    import:           shared-properties
+    hs-source-dirs:   src
+    exposed-modules:
+        Types
+        Conversation
+        Storage
+        LLMClient
+        PromptAssembly
+        AgentCore
+    build-depends:
+        base >=4.18 && <5,
+        -- Local dependencies
+        anthropic-types,
+        anthropic-protocol,
+        anthropic-client,
+        -- JSON handling
+        aeson >=2.1,
+        -- Text and ByteString
+        text >=2.0,
+        -- File I/O
+        filepath >=1.4,
+        directory >=1.3,
+        -- Time
+        time >=1.12
+
+executable lumen
+    import:           shared-properties
+    main-is:          Main.hs
+    hs-source-dirs:   app
+    build-depends:
+        base >=4.18 && <5,
+        lumen,
+        text
+    ghc-options:
+        -threaded
+        -rtsopts
+        -with-rtsopts=-N
+
+test-suite lumen-test
+    import:           shared-properties
+    type:             exitcode-stdio-1.0
+    hs-source-dirs:   test
+    main-is:          Main.hs
+    other-modules:
+        Test.Generators
+        Test.Conversation
+        Test.Types
+        Test.PromptAssembly
+        Test.AgentCore
+        Test.Storage
+    build-depends:
+        base >=4.18 && <5,
+        lumen,
+        -- PBT framework
+        hedgehog >=1.4,
+        -- Testing utilities
+        tasty >=1.4,
+        tasty-hedgehog >=1.4,
+        -- Required for testing
+        anthropic-types,
+        anthropic-protocol,
+        aeson,
+        text,
+        time
+    ghc-options:
+        -threaded
+        -rtsopts
+        -with-rtsopts=-N

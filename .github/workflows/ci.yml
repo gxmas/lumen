@@ -1,0 +1,141 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  build-and-test:
+    name: Build and Test
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        ghc: ["9.10.3"]
+        cabal: ["3.10"]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Checkout repo anthropic-types
+        uses: actions/checkout@v4
+        with:
+          repository: gxmas/anthropic-types
+          token: ${{ secrets.GITHUB_TOKEN }}
+          path: libs/anthropic-types
+
+      - name: Checkout repo anthropic-protocol
+        uses: actions/checkout@v4
+        with:
+          repository: gxmas/anthropic-protocol
+          token: ${{ secrets.GITHUB_TOKEN }}
+          path: libs/anthropic-protocol
+
+      - name: Checkout repo anthropic-client
+        uses: actions/checkout@v4
+        with:
+          repository: gxmas/anthropic-client
+          token: ${{ secrets.GITHUB_TOKEN }}
+          path: libs/anthropic-client
+
+      - name: Checkout repo json-schema-combinators
+        uses: actions/checkout@v4
+        with:
+          repository: gxmas/json-schema-combinators
+          token: ${{ secrets.GITHUB_TOKEN }}
+          path: libs/json-schema-combinators
+
+      - name: Setup Haskell
+        uses: haskell-actions/setup@v2
+        with:
+          ghc-version: ${{ matrix.ghc }}
+          cabal-version: ${{ matrix.cabal }}
+          cabal-update: false
+
+      - name: Cache cabal packages
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cabal/packages
+            ~/.cabal/store
+            dist-newstyle
+          key: ${{ runner.os }}-ghc-${{ matrix.ghc }}-cabal-${{ hashFiles('**/*.cabal', '**/cabal.project') }}
+          restore-keys: |
+            ${{ runner.os }}-ghc-${{ matrix.ghc }}-
+            ${{ runner.os }}-
+
+      - name: Update cabal package index
+        run: cabal update --project-file=cabal.project.ci
+
+      - name: Build dependencies
+        run: cabal build --project-file=cabal.project.ci --only-dependencies --enable-tests
+
+      - name: Build
+        run: cabal build --project-file=cabal.project.ci all
+
+      - name: Run tests (quick - 100 iterations)
+        run: cabal test --project-file=cabal.project.ci --test-show-details=streaming all
+
+      - name: Run comprehensive tests (1,000 iterations)
+        run: cabal test --project-file=cabal.project.ci --test-show-details=streaming --test-options="--qc-max-success=1000" all
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Checkout repo anthropic-types
+        uses: actions/checkout@v4
+        with:
+          repository: gxmas/anthropic-types
+          token: ${{ secrets.GITHUB_TOKEN }}
+          path: libs/anthropic-types
+
+      - name: Checkout repo anthropic-protocol
+        uses: actions/checkout@v4
+        with:
+          repository: gxmas/anthropic-protocol
+          token: ${{ secrets.GITHUB_TOKEN }}
+          path: libs/anthropic-protocol
+
+      - name: Checkout repo anthropic-client
+        uses: actions/checkout@v4
+        with:
+          repository: gxmas/anthropic-client
+          token: ${{ secrets.GITHUB_TOKEN }}
+          path: libs/anthropic-client
+
+      - name: Checkout repo json-schema-combinators
+        uses: actions/checkout@v4
+        with:
+          repository: gxmas/json-schema-combinators
+          token: ${{ secrets.GITHUB_TOKEN }}
+          path: libs/json-schema-combinators
+
+      - name: Setup Haskell
+        uses: haskell-actions/setup@v2
+        with:
+          ghc-version: "9.10.3"
+          cabal-version: "3.10"
+          cabal-update: false
+
+      - name: Cache cabal packages
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cabal/packages
+            ~/.cabal/store
+            dist-newstyle
+          key: ${{ runner.os }}-ghc-9.10.3-cabal-${{ hashFiles('**/*.cabal', '**/cabal.project') }}
+
+      - name: Update cabal package index
+        run: cabal update --project-file=cabal.project.ci
+
+      - name: Build for warnings
+        run: cabal build --project-file=cabal.project.ci all --ghc-options="-Werror"
