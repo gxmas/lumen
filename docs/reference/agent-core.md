@@ -71,23 +71,74 @@ runTurn :: ClientHandle -> Text -> AgentState -> IO AgentState
 | `client` | `ClientHandle` | LLM client handle |
 | `userInput` | `Text` | The user's message text |
 | `state` | `AgentState` | Current agent state |
-| **Returns** | `AgentState` | Updated state after the turn |
+| **Returns** | `AgentState` | Updated state after the full turn (including any tool loops) |
 
 **Behavior:**
 
 1. Wraps user input as a `Message` using `userMessage (TextMessage userInput)`
 2. Adds the user message to conversation via `Conversation.addMessage`
-3. Assembles the API request via `PromptAssembly.assembleRequest`
-4. Sends the request via `LLMClient.sendRequest`
-5. On **error**: displays the error message and returns the **original** state (user message is discarded)
-6. On **success**:
-   - Wraps the response as `assistantMessage (BlockMessage response.content)`
-   - Displays text blocks from the response
+3. Delegates to `processResponse` to send the request and handle the response
+
+`runTurn` itself is a thin entry point. The tool execution loop lives in `processResponse`.
+
+**Error handling:** On API error, `processResponse` displays the error and returns the state as it was passed in — which for the initial call from `runTurn` is `stateWithUser` (the user message IS included). The failed user message is persisted by `mainLoop`, and the next iteration receives this state with the orphaned user message in history.
+
+## processResponse (internal)
+
+Send the current conversation to the LLM and process the response, looping if the model requests tool use.
+
+```haskell
+processResponse :: ClientHandle -> AgentState -> IO AgentState
+```
+
+This function is not exported but drives the tool execution loop:
+
+1. Assembles the request via `PromptAssembly.assembleRequest` and sends it
+2. On **API error**: displays the error, returns the state unchanged
+3. On **success with tool use** (`hasToolUse response.content = True`):
+   - Adds the assistant message (containing `tool_use` blocks) to the conversation
+   - Displays `[tool] {name}` for each tool the model requested
+   - Calls `ToolRuntime.executeTool` for each tool use block (validated against `SafetyConfig`)
+   - Displays `[result] …` or `[error] …` preview for each result
+   - Adds tool results as a user message with `BlockMessage` content
+   - **Loops** — calls `processResponse` again with the updated state
+4. On **success with text only**:
+   - Displays the text response
    - Adds the assistant message to the conversation
    - Increments `turnCount`
    - Returns the updated state
 
-**Error handling:** On API error, the user's message is not persisted — the conversation rolls back to its state before the turn. This prevents orphaned user messages without responses.
+The loop continues until the model produces a response with no `tool_use` blocks. In practice this is bounded by the model's reasoning — there is no hard loop limit in MVP.
+
+## hasToolUse
+
+Check whether a list of content blocks contains any tool use requests.
+
+```haskell
+hasToolUse :: [ContentBlock] -> Bool
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `blocks` | `[ContentBlock]` | Content blocks from an LLM response |
+| **Returns** | `Bool` | `True` if any block is a `ToolUseContent` |
+
+Used by `processResponse` to decide whether to enter the tool execution branch or the text display branch.
+
+## getToolUseBlocks
+
+Extract `ToolUseBlock` values from a list of content blocks.
+
+```haskell
+getToolUseBlocks :: [ContentBlock] -> [ToolUseBlock]
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `blocks` | `[ContentBlock]` | Content blocks from an LLM response |
+| **Returns** | `[ToolUseBlock]` | All `ToolUseContent` blocks, in order |
+
+Returns an empty list if no tool use blocks are present. `processResponse` passes this list to `mapM (executeTool safetyConfig)` to execute all requested tools before looping.
 
 ## isQuitCommand
 

@@ -1,10 +1,11 @@
--- | REPL loop orchestration.
+-- | REPL loop orchestration with tool execution.
 --
 -- This module coordinates the main agent loop:
 -- initialize -> mainLoop -> runTurn (repeatedly)
 --
--- Phase 1: Text-only responses, no tool execution.
--- Phase 2 will add tool execution handling.
+-- Tool execution: When the LLM responds with tool_use blocks,
+-- the agent validates and executes each tool, sends results back,
+-- and loops until the LLM responds with text only.
 module AgentCore
   ( -- * Initialization
     initialize
@@ -17,6 +18,8 @@ module AgentCore
 
     -- * Utilities
   , isQuitCommand
+  , hasToolUse
+  , getToolUseBlocks
   ) where
 
 import Data.Text (Text)
@@ -34,6 +37,8 @@ import Anthropic.Types
   , MessageContent (..)
   )
 import Anthropic.Types.Content.Text (TextBlock (..))
+import Anthropic.Types.Content.ToolUse (ToolUseBlock (..))
+import Anthropic.Types.Content.ToolResult (ToolResultBlock (..), ToolResultContent (..))
 
 import qualified Types
 import Types (AgentState (..), AgentConfig (..))
@@ -41,6 +46,7 @@ import Conversation (addMessage)
 import Storage (saveConversation, loadConversation)
 import LLMClient (ClientHandle, sendRequest, LLMError (..))
 import PromptAssembly (assembleRequest)
+import ToolRuntime (executeTool)
 
 -- | Initialize agent state from configuration.
 --
@@ -102,49 +108,106 @@ mainLoop client state = do
 
 -- | Run a single turn of conversation.
 --
--- Takes user input, sends to LLM, displays response, updates state.
--- Phase 1: Text-only. Phase 2 will handle tool use blocks.
+-- Takes user input, sends to LLM, handles tool use loops,
+-- displays final response, and updates state.
 runTurn :: ClientHandle -> Text -> AgentState -> IO AgentState
 runTurn client userInput state = do
   -- Add user message to conversation
   let userMsg = userMessage (TextMessage userInput)
   let stateWithUser = addMessage userMsg state
 
-  -- Assemble request
-  let request = assembleRequest stateWithUser
+  -- Send to LLM and handle response (possibly with tool use loop)
+  processResponse client stateWithUser
 
-  -- Send to LLM
+-- | Send the current conversation to the LLM and process the response.
+--
+-- If the response contains tool use blocks, executes them and loops.
+-- Otherwise, displays the text response and returns.
+processResponse :: ClientHandle -> AgentState -> IO AgentState
+processResponse client state = do
+  -- Assemble request and send
+  let request = assembleRequest state
   result <- sendRequest client request
 
   case result of
     Left err -> do
-      -- Display error and return unchanged state
+      -- Display error and return state before user message was added
       displayError err
       pure state
 
-    Right response -> do
-      -- Extract assistant's reply
-      let assistantContent = BlockMessage response.content
-      let assistantMsg = assistantMessage assistantContent
+    Right response
+      | hasToolUse response.content -> do
+          -- Add assistant message (with tool_use blocks) to conversation
+          let assistantContent = BlockMessage response.content
+          let assistantMsg = assistantMessage assistantContent
+          let stateWithAssistant = addMessage assistantMsg state
 
-      -- Display the response
-      displayResponse response
+          -- Display what tools the model wants to use
+          displayToolUseIntent response.content
 
-      -- Add assistant message and increment turn count
-      let finalState = (addMessage assistantMsg stateWithUser)
-            { turnCount = stateWithUser.turnCount + 1 }
+          -- Execute each tool and collect results
+          let toolBlocks = getToolUseBlocks response.content
+          results <- mapM (executeTool state.config.safetyConfig) toolBlocks
 
-      pure finalState
+          -- Display tool results
+          mapM_ displayToolResult results
 
--- | Display the assistant's response.
---
--- Phase 1: Just print text blocks.
--- Phase 2 will handle tool use blocks differently.
+          -- Add tool results as a user message
+          let resultBlocks = map ToolResultContent results
+          let resultMsg = userMessage (BlockMessage resultBlocks)
+          let stateWithResults = addMessage resultMsg stateWithAssistant
+
+          -- Loop: send results back to LLM
+          processResponse client stateWithResults
+
+      | otherwise -> do
+          -- Text-only response — display and finish
+          let assistantContent = BlockMessage response.content
+          let assistantMsg = assistantMessage assistantContent
+
+          displayResponse response
+
+          let finalState = (addMessage assistantMsg state)
+                { turnCount = state.turnCount + 1 }
+          pure finalState
+
+-- | Check if content blocks contain any tool use requests.
+hasToolUse :: [ContentBlock] -> Bool
+hasToolUse = any isToolUseBlock
+  where
+    isToolUseBlock (ToolUseContent _) = True
+    isToolUseBlock _                  = False
+
+-- | Extract ToolUseBlock values from content blocks.
+getToolUseBlocks :: [ContentBlock] -> [ToolUseBlock]
+getToolUseBlocks blocks = [tb | ToolUseContent tb <- blocks]
+
+-- | Display the assistant's text response.
 displayResponse :: MessageResponse -> IO ()
 displayResponse response = do
   let textBlocks = [tb.text | TextContent tb <- response.content]
   mapM_ TIO.putStrLn textBlocks
   putStrLn ""  -- Extra newline for readability
+
+-- | Display which tools the model wants to use.
+displayToolUseIntent :: [ContentBlock] -> IO ()
+displayToolUseIntent blocks = do
+  let toolUses = getToolUseBlocks blocks
+  mapM_ (\tb -> putStrLn $ "[tool] " <> T.unpack tb.name) toolUses
+
+-- | Display a tool result summary.
+displayToolResult :: ToolResultBlock -> IO ()
+displayToolResult result = do
+  let prefix = case result.isError of
+        Just True -> "[error] "
+        _         -> "[result] "
+  case result.content of
+    Just (ToolResultText txt) -> do
+      let preview = if T.length txt > 200
+            then T.take 200 txt <> "..."
+            else txt
+      putStrLn $ prefix <> T.unpack preview
+    _ -> putStrLn $ prefix <> "(no content)"
 
 -- | Display an LLM error to the user.
 displayError :: LLMError -> IO ()

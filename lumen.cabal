@@ -38,12 +38,16 @@ library
         LLMClient
         PromptAssembly
         AgentCore
+        ToolCatalog
+        Guardrails
+        ToolRuntime
     build-depends:
         base >=4.18 && <5,
         -- Local dependencies
         anthropic-types,
         anthropic-protocol,
         anthropic-client,
+        anthropic-tools-common,
         -- JSON handling
         aeson >=2.1,
         -- Text and ByteString
@@ -79,6 +83,13 @@ test-suite lumen-test
         Test.PromptAssembly
         Test.AgentCore
         Test.Storage
+        Test.ToolCatalog
+        Test.Guardrails
+        Test.ToolRuntime
+        Test.GuardrailsHelpers
+        Test.SchemaInputs
+        Test.OrderedMap
+        Test.SchemaSerialization
     build-depends:
         base >=4.18 && <5,
         lumen,
@@ -90,9 +101,14 @@ test-suite lumen-test
         -- Required for testing
         anthropic-types,
         anthropic-protocol,
+        anthropic-tools-common,
+        json-schema-combinators,
         aeson,
+        containers,
+        scientific,
         text,
-        time
+        time,
+        filepath
     ghc-options:
         -threaded
         -rtsopts

@@ -3,4 +3,5 @@ packages:
     libs/anthropic-types
     libs/anthropic-protocol
     libs/anthropic-client
+    libs/anthropic-tools-common
     libs/json-schema-combinators

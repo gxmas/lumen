@@ -115,10 +115,11 @@ usage = unlines
 displayWelcome :: AgentConfig -> IO ()
 displayWelcome config = do
   putStrLn "==================================="
-  putStrLn "    Lumen Agent (Phase 1)"
+  putStrLn "    Lumen Agent (MVP)"
   putStrLn "==================================="
   putStrLn $ "Model: " <> T.unpack config.model
   putStrLn $ "Conversation: " <> T.unpack config.conversationId
+  putStrLn "Tools: read_file, write_file, list_directory, search_files, execute_command"
   putStrLn ""
   putStrLn "Type 'quit' to exit"
   putStrLn ""

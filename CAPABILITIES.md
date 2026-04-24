@@ -1,12 +1,12 @@
 # Lumen Agent - Current Capabilities
 
 **Project Code Name:** Dawn  
-**Current Phase:** Phase 1 (Text-only conversation with persistence)  
-**Last Updated:** 2026-04-07
+**Current Phase:** MVP (conversation with tool execution)  
+**Last Updated:** 2026-04-24
 
 ## Overview
 
-Lumen is a conversational AI agent built in Haskell with Claude API integration. This document describes what Lumen can and cannot do in its current state.
+Lumen is a conversational AI agent built in Haskell with Claude API integration. The MVP adds a full tool execution layer to the Phase 1 conversation foundation: the agent can now read files, write files, list directories, search files, and run shell commands — all validated through a safety guardrails layer before execution.
 
 ## ✅ Core Features
 
@@ -16,16 +16,42 @@ Lumen is a conversational AI agent built in Haskell with Claude API integration.
 - Clean, line-by-line text display
 - Maintains conversation context across turns
 
-### 2. Conversation Persistence
+### 2. Tool Execution
+
+The agent exposes 5 tools to the LLM and executes them automatically as part of the conversation loop:
+
+| Tool | Description |
+|------|-------------|
+| `read_file` | Read a file's contents from disk |
+| `write_file` | Write content to a file on disk |
+| `list_directory` | List entries in a directory |
+| `search_files` | Search for files matching a pattern under a root path |
+| `execute_command` | Run a shell command and capture output |
+
+**How it works:** When Claude decides to use a tool, `AgentCore` detects the `tool_use` blocks in the response, validates each action via `Guardrails`, executes it via `ToolRuntime`, sends the results back to Claude, and loops until Claude returns a text-only response.
+
+### 3. Safety Guardrails
+
+All file and directory actions are validated before execution:
+
+| Guardrail | Behaviour |
+|-----------|-----------|
+| Path traversal blocking | Any path containing `..` is denied |
+| System path blocking | Paths under `/etc`, `/bin`, `/usr`, `/var`, `/sys`, `/boot`, `/sbin`, `/lib`, `/proc`, `/dev` are denied (unless `allowSystemPaths` is set) |
+| Blocked path list | Operator-configured list of paths that are always denied |
+| File deletion denial | `DeleteFile` actions are always denied regardless of configuration |
+| Shell commands | `execute_command` is always allowed (guardrail defers to the LLM) |
+
+### 4. Conversation Persistence
 - Automatically saves conversations to `~/.lumen/conversations/{id}.json`
 - Resumes previous conversations on restart
 - Tracks conversation metadata:
   - `conversationId`: Unique identifier
   - `createdAt`: When conversation was first created
   - `lastUpdatedAt`: When last modified
-  - `messages`: Full conversation history
+  - `messages`: Full conversation history (including tool use and tool result turns)
 
-### 3. Configuration Options
+### 5. Configuration Options
 
 ```bash
 # API Key (required)
@@ -47,17 +73,19 @@ lumen --conversation-id project-x     # Different conversation context
 lumen --help                          # Show usage
 ```
 
-### 4. Default Configuration
+### 6. Default Configuration
 
 | Setting | Default Value |
 |---------|---------------|
 | Model | `claude-sonnet-4-20250514` |
 | Max Tokens | 4096 |
 | Conversation ID | `default` |
-| System Prompt | "You are Lumen, a helpful AI assistant..." |
+| System Prompt | Injected by `PromptAssembly` with tool descriptions |
 | Storage Location | `~/.lumen/conversations/` |
+| Allow System Paths | `False` |
+| Blocked Paths | `[]` (empty — deny list is opt-in) |
 
-### 5. REPL Commands
+### 7. REPL Commands
 
 | Command | Action |
 |---------|--------|
@@ -68,73 +96,124 @@ lumen --help                          # Show usage
 
 All commands are case-insensitive and whitespace-tolerant.
 
-## 🏗️ Architecture Strengths
+## 🏗️ Architecture
+
+### Module Map
+
+9 source modules across two layers:
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                   AgentCore (REPL)                      │
+│  initialize, mainLoop, runTurn, processResponse         │
+│  hasToolUse, getToolUseBlocks                           │
+└──────────────┬──────────────────────────────────────────┘
+               │
+       ┌───────┴──────────┐
+       │                  │
+┌──────▼──────┐    ┌──────▼──────────┐
+│  LLMClient  │    │  Conversation   │
+│  (API I/O)  │    │  (Pure Fns)     │
+└─────────────┘    └──────────────────┘
+       │                  │
+┌──────▼──────┐    ┌──────▼──────────┐
+│   Storage   │    │ PromptAssembly  │
+│  (File I/O) │    │  (Pure Fns)     │
+└─────────────┘    └──────────────────┘
+                          │
+               ┌──────────┴──────────────┐
+               │                         │
+       ┌───────▼───────┐       ┌─────────▼───────┐
+       │  ToolCatalog  │       │   ToolRuntime    │
+       │  (Registry)   │       │  (Executor)      │
+       └───────────────┘       └─────────┬────────┘
+                                         │
+                               ┌─────────▼────────┐
+                               │    Guardrails     │
+                               │  (Validation)     │
+                               └──────────────────┘
+                                         │
+                               ┌─────────▼────────┐
+                               │      Types        │
+                               │    (Domain)       │
+                               └──────────────────┘
+```
 
 ### Pure Functional Core
 
 **Conversation Management** (`src/Conversation.hs`)
-- `addMessage`: Append single message
-- `addMessages`: Append multiple messages
+- `addMessage`, `addMessages`: Append messages
 - `getRecent`: Get last N messages
-- `getAll`: Get entire conversation
-- `messageCount`: Count messages
-- `isEmpty`: Check if empty
+- `getAll`, `messageCount`, `isEmpty`
 - All operations tested with property-based tests
 
 **Request Assembly** (`src/PromptAssembly.hs`)
-- Assembles MessageRequest from agent state
-- Includes model, maxTokens, messages, system prompt
+- `assembleRequest`: Builds `MessageRequest` from agent state
+- Injects tool definitions from `ToolCatalog` via `withTools`
 - Tested to ensure correct field population
 
-### Clean Separation of Concerns
+**Tool Registry** (`src/ToolCatalog.hs`)
+- `allTools`: All 5 tool definitions wrapped for API requests
+- `allToolDefs`: Raw definitions for lookup
+- `lookupTool`: Find a definition by name
+
+**Safety Validation** (`src/Guardrails.hs`)
+- `Action` ADT: `ReadFile`, `WriteFile`, `DeleteFile`, `ExecuteCommand`
+- `validateAction`: Pure validation against `SafetyConfig`
+- `isSafePath`, `hasPathTraversal`, `isSystemPath`, `isBlockedPath`
+- All validation logic is pure and fully testable
+
+### Tool Execution Pipeline
+
+`ToolRuntime` wires validation to execution in a single function:
 
 ```
-┌─────────────────────────────────────────┐
-│           AgentCore (REPL)              │
-│  - mainLoop, runTurn, initialize        │
-└─────────────┬───────────────────────────┘
-              │
-      ┌───────┴────────┐
-      │                │
-┌─────▼─────┐    ┌────▼─────────┐
-│ LLMClient │    │ Conversation │
-│ (API I/O) │    │  (Pure Fns)  │
-└───────────┘    └──────────────┘
-      │                │
-┌─────▼─────┐    ┌────▼──────────┐
-│  Storage  │    │PromptAssembly │
-│ (File I/O)│    │   (Pure Fns)  │
-└───────────┘    └───────────────┘
-      │
-┌─────▼─────┐
-│   Types   │
-│  (Domain) │
-└───────────┘
+ToolUseBlock
+    │
+    ▼
+mkXxxAction          -- parse typed input from JSON
+    │
+    ▼
+validateAction       -- Guardrails check (pure)
+    │
+    ├── Blocked ──▶  mkErrorResult  ──▶  ToolResultBlock (is_error=true)
+    │
+    └── Allowed ──▶  executeXxx     ──▶  ToolResultBlock (success or IO error)
 ```
 
 ### Robust Error Handling
 
-| Error Type | Behavior |
-|------------|----------|
+| Error Type | Behaviour |
+|------------|-----------|
 | API Error | Display error message, continue REPL |
 | Network Error | Display error message, continue REPL |
 | Timeout Error | Display error message, continue REPL |
 | Parse Error | Display error message, continue REPL |
 | File I/O Error | Silent fallback (load) or retry (save) |
+| Tool parse error | Error result returned to LLM, conversation continues |
+| Tool IO error | Error result returned to LLM, conversation continues |
+| Guardrail block | Error result returned to LLM, conversation continues |
 
-**Philosophy:** Graceful degradation - never crash, always continue conversation.
+**Philosophy:** Graceful degradation — never crash, always continue conversation.
 
 ### Test Coverage
 
-**31 property-based tests** across 5 modules:
+**110 property-based tests** across 12 test modules:
 
 | Module | Category | Properties | What's Tested |
 |--------|----------|------------|---------------|
 | **Types** | CRITICAL | 5 | JSON serialization round-trips |
 | **Conversation** | CRITICAL | 12 | Message list operations |
-| **PromptAssembly** | STANDARD | 5 | Request assembly validation |
-| **AgentCore** | MINIMAL | 5 | Command recognition |
+| **PromptAssembly** | STANDARD | 6 | Request assembly validation |
+| **AgentCore** | MINIMAL | 8 | Command recognition, tool detection |
 | **Storage** | MINIMAL | 4 | Path safety checks |
+| **ToolCatalog** | STANDARD | 5 | Tool registry lookup and completeness |
+| **Guardrails** | CRITICAL | 10 | Path validation, action rules |
+| **GuardrailsHelpers** | CRITICAL | 9 | Path traversal and system path detection |
+| **ToolRuntime** | CRITICAL | 9 | Action extraction, error result construction |
+| **OrderedMap** | STANDARD | 16 | Ordered map invariants (underlying library) |
+| **SchemaInputs** | STANDARD | 7 | Tool input schema parsing |
+| **SchemaSerialization** | STANDARD | 19 | Tool schema JSON round-trips |
 
 **Test strategies:**
 - Round-trip properties (serialization preserves data)
@@ -146,18 +225,9 @@ All commands are case-insensitive and whitespace-tolerant.
 **Default:** 100 iterations per property  
 **CI (main branch):** 10,000 iterations per property
 
-## 🚫 Phase 1 Limitations
+## 🚫 MVP Limitations
 
 ### What Lumen **Cannot** Do (Yet)
-
-#### No Tool Execution
-- ❌ Cannot read files from disk
-- ❌ Cannot write files to disk
-- ❌ Cannot execute shell commands
-- ❌ Cannot browse the web
-- ❌ Cannot call external APIs
-
-The `SafetyConfig` type is defined but unused in Phase 1.
 
 #### No Context Window Management
 - ❌ Sends entire conversation history every request
@@ -165,7 +235,7 @@ The `SafetyConfig` type is defined but unused in Phase 1.
 - ❌ No smart truncation
 - ❌ Can hit token limits on long conversations
 
-Current behavior: `getContextWindow` returns all messages.
+Current behaviour: `getContextWindow` returns all messages.
 
 #### No Streaming
 - ❌ Responses appear all at once after completion
@@ -184,88 +254,65 @@ Current behavior: `getContextWindow` returns all messages.
 - ❌ No task decomposition
 - ❌ No multi-step workflows
 - ❌ No reflection or self-correction loops
-- ❌ Single request-response cycle only
+
+#### Guardrails Scope
+- ❌ No secret detection (API keys, tokens in files)
+- ❌ No resource limits (file size, command timeout)
+- ❌ `execute_command` is fully trusted — the LLM can run arbitrary shell commands
 
 ## 📊 Example Session
 
 ```bash
 $ cabal run lumen
 ===================================
-    Lumen Agent (Phase 1)
+    Lumen Agent (MVP)
 ===================================
 Model: claude-sonnet-4-20250514
 Conversation: default
+Tools: read_file, write_file, list_directory, search_files, execute_command
 
 Type 'quit' to exit
 
-> What's the capital of France?
-Paris is the capital of France. It has been the capital since 
-987 CE and is the most populous city in France.
+> What files are in the current directory?
+[tool] list_directory
+[result] README.md
+lumen.cabal
+src/
+test/
+app/
+...
 
-> Thanks!
-You're welcome! Feel free to ask if you have any other questions.
+Here are the files in the current directory: README.md, lumen.cabal, src/, test/, app/
 
-> quit
-Goodbye!
+> Read the README.md file
+[tool] read_file
+[result] # Lumen Agent...
 
-# --- Restart later ---
-
-$ cabal run lumen
-Resuming conversation: default
-Loaded 4 messages
-
-> What did we just talk about?
-We just discussed the capital of France. You asked about it, 
-and I confirmed that Paris is the capital.
+Here is the content of README.md: ...
 
 > quit
 Goodbye!
-```
-
-### Multiple Conversations
-
-```bash
-# Work conversation
-$ lumen --conversation-id work
-Starting new conversation: work
-> Let's discuss the project roadmap...
-
-# Personal conversation  
-$ lumen --conversation-id personal
-Starting new conversation: personal
-> What are some good books to read?
-
-# Each conversation maintains separate history
 ```
 
 ## 🎯 Use Cases
 
 ### ✅ What Lumen is Good For (Now)
 
-- **Chatbot prototyping**: Test conversation flows
-- **Model comparison**: Try different Claude models
-- **Conversation experiments**: Persistent context across sessions
-- **Educational**: Learn Haskell + PBT patterns
-- **Architecture demo**: Clean functional design
-
-### ⏳ What Lumen Will Be Good For (Phase 2)
-
-- **File analysis**: Read and analyze codebases
+- **File analysis**: Read and summarize files or codebases
 - **Code generation**: Write files based on conversation
-- **Shell automation**: Execute commands with safety checks
-- **Research assistant**: Search and summarize information
-- **Development workflows**: Git operations, testing, deployment
+- **Shell automation**: Execute commands and interpret output
+- **Directory exploration**: Browse and search a project
+- **Educational**: Learn Haskell + PBT patterns + tool loop design
 
-## 🔮 Phase 2 Roadmap
+### ⏳ What Lumen Will Be Good For (Next)
+
+- **Context management**: Token-aware conversation truncation
+- **Streaming**: Incremental response display
+- **Advanced REPL**: List, switch, and manage conversations
+
+## 🔮 Next Phase Roadmap
 
 Planned enhancements:
-
-### Tool Execution Framework
-- [ ] File system operations (read/write)
-- [ ] Shell command execution
-- [ ] Safety guardrails (path validation)
-- [ ] Tool result handling
-- [ ] State machine testing for tool execution
 
 ### Context Management
 - [ ] Token counting
@@ -286,40 +333,16 @@ Planned enhancements:
 - [ ] Incremental response display
 - [ ] Cancel mid-stream
 
+### Guardrails Hardening
+- [ ] Secret detection in file contents
+- [ ] Command timeout limits
+- [ ] File size limits for reads/writes
+
 ## 🔧 Technical Details
 
 ### Storage Format
 
-Conversations stored as JSON in `~/.lumen/conversations/{id}.json`:
-
-```json
-{
-  "conversationId": "default",
-  "createdAt": "2026-04-07T12:00:00Z",
-  "lastUpdatedAt": "2026-04-07T12:05:30Z",
-  "messages": [
-    {
-      "role": "user",
-      "content": {
-        "type": "text",
-        "text": "Hello!"
-      }
-    },
-    {
-      "role": "assistant",
-      "content": {
-        "type": "blocks",
-        "blocks": [
-          {
-            "type": "text",
-            "text": "Hello! How can I help you today?"
-          }
-        ]
-      }
-    }
-  ]
-}
-```
+Conversations stored as JSON in `~/.lumen/conversations/{id}.json`. Tool use turns are stored as regular assistant messages with `blocks` content; tool results are stored as user messages with `blocks` content containing `tool_result` blocks.
 
 ### API Integration
 
@@ -329,6 +352,10 @@ Uses `anthropic-client` library:
 - Rate limit handling
 - Proper error mapping
 
+Tool definitions from `anthropic-tools-common` library:
+- `fileSystemTools`: `read_file`, `write_file`, `list_directory`, `search_files`
+- `shellTools`: `execute_command`
+
 ### Type Safety
 
 All domain types have:
@@ -336,13 +363,17 @@ All domain types have:
 - Strict field evaluation (`!`)
 - Comprehensive documentation
 
+`SafetyConfig` and `ValidationResult` (defined in `Types.hs`) flow from configuration through `Guardrails` validation to `ToolRuntime` execution — the validation path is entirely pure and separately testable.
+
 ## 📈 Success Metrics
 
 **Current achievements:**
-- ✅ 31/31 property tests passing
+- ✅ 110/110 property tests passing
 - ✅ 100% test success rate at 1,000 iterations
+- ✅ 5 tools integrated and validated
+- ✅ Safety guardrails on all file operations
 - ✅ Zero crashes in normal operation
-- ✅ Graceful error handling
+- ✅ Graceful error handling (including guardrail blocks and tool IO errors)
 - ✅ Clean separation of pure/IO code
 
 **Quality indicators:**
@@ -363,11 +394,21 @@ To add new capabilities:
 5. Ensure `make test-full` passes
 6. Update this document
 
+To add a new tool:
+
+1. Add its `CustomToolDef` to `allToolDefs` in `src/ToolCatalog.hs`
+2. Add an `Action` variant to `src/Guardrails.hs` if it needs path validation
+3. Add a case to `executeTool` in `src/ToolRuntime.hs`
+4. Write properties for the new action extraction helper
+5. See `docs/guides/adding-a-tool.md` for the full walkthrough
+
 ## 📚 Related Documentation
 
 - [README.md](README.md) - Project overview and setup
+- [docs/index.md](docs/index.md) - Full documentation index
+- [docs/guides/adding-a-tool.md](docs/guides/adding-a-tool.md) - Step-by-step tool addition guide
 - [.github/workflows/ci.yml](.github/workflows/ci.yml) - CI/CD configuration
 
 ---
 
-**Bottom Line:** Lumen Phase 1 is a solid, well-tested conversational agent with persistent memory. It's not yet a practical assistant (no tools), but it's an excellent foundation for Phase 2 enhancements.
+**Bottom Line:** Lumen MVP is a working Haskell AI coding agent with a validated tool execution layer. The agent can read, write, search, and execute — safely — while maintaining the clean pure/IO separation and comprehensive PBT coverage established in Phase 1.

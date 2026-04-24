@@ -10,7 +10,7 @@ How to run, configure, and interpret Lumen's property-based test suite.
 cabal test
 ```
 
-Runs all 31 properties with 100 random inputs each. Takes a few seconds.
+Runs all 110 properties across 12 test modules with 100 random inputs each. Takes a few seconds.
 
 ### Verbose Output
 
@@ -41,11 +41,14 @@ make test-full     # 10,000 iterations (CI-level)
 Filter by test group name using `--pattern`:
 
 ```bash
+cabal test --test-options="--pattern Guardrails"
+cabal test --test-options="--pattern ToolRuntime"
+cabal test --test-options="--pattern SchemaInputs"
+cabal test --test-options="--pattern OrderedMap"
 cabal test --test-options="--pattern Conversation"
 cabal test --test-options="--pattern Types"
 cabal test --test-options="--pattern PromptAssembly"
 cabal test --test-options="--pattern AgentCore"
-cabal test --test-options="--pattern Storage"
 ```
 
 The pattern matches against the test group name in the Tasty tree.
@@ -67,8 +70,8 @@ Higher counts catch rarer edge cases but take longer. For local development, 100
 ### Passing Test
 
 ```
-Conversation (CRITICAL)
-  prop_addMessage_increases_length: OK (0.02s)
+Guardrails (CRITICAL)
+  P0: ReadFile with safe path is allowed: OK (0.02s)
       ✓ 100 tests completed
 ```
 
@@ -77,8 +80,8 @@ The property held for all generated inputs.
 ### Failing Test
 
 ```
-Conversation (CRITICAL)
-  prop_addMessage_increases_length: FAIL (0.01s)
+Guardrails (CRITICAL)
+  P0: ReadFile with safe path is allowed: FAIL (0.01s)
       ✗ failed at test 42
         ...shrunk input shown here...
 ```
@@ -87,17 +90,52 @@ Hedgehog shows the **shrunk** input — the smallest input that still triggers t
 
 ## Test Organization
 
-Tests are organized in `test/Test/` with one module per source module:
+Tests live in `test/Test/` with one module per source module (or library component). Shared generators for domain types live in `test/Test/Generators.hs`. Tool-specific generators are defined inline in each test module.
 
-| Test Module | Source Module | Category | Properties |
-|-------------|-------------|----------|------------|
-| `Test.Types` | `Types` | CRITICAL | 5 |
+| Test Module | Source / Component | Category | Properties |
+|---|---|---|---|
 | `Test.Conversation` | `Conversation` | CRITICAL | 12 |
-| `Test.PromptAssembly` | `PromptAssembly` | STANDARD | 5 |
-| `Test.AgentCore` | `AgentCore` | MINIMAL | 5 |
+| `Test.Types` | `Types` | CRITICAL | 5 |
+| `Test.PromptAssembly` | `PromptAssembly` | STANDARD | 6 |
+| `Test.AgentCore` | `AgentCore` | MINIMAL | 8 |
 | `Test.Storage` | `Storage` | MINIMAL | 4 |
+| `Test.ToolCatalog` | `ToolCatalog` | STANDARD | 5 |
+| `Test.Guardrails` | `Guardrails` | CRITICAL | 10 |
+| `Test.GuardrailsHelpers` | `Guardrails` (internals) | CRITICAL | 9 |
+| `Test.ToolRuntime` | `ToolRuntime` | CRITICAL | 9 |
+| `Test.SchemaInputs` | `anthropic-tools-common Schema` | CRITICAL | 7 |
+| `Test.OrderedMap` | `json-schema OrderedMap` | STANDARD | 16 |
+| `Test.SchemaSerialization` | `json-schema encode/decode` | CRITICAL | 19 |
+| **Total** | | | **110** |
 
-Generators for all test data live in `Test.Generators`.
+## Test Categories
+
+### CRITICAL
+
+Properties that guard security boundaries or data correctness. A failure here is a blocker.
+
+- **`Test.Conversation`** — Conversation history invariants: message ordering, context window truncation, round-trip serialization.
+- **`Test.Types`** — JSON round-trips for all wire-format types (`Message`, `ContentBlock`, etc.).
+- **`Test.Guardrails`** — Safety rules: `ReadFile`/`WriteFile` path validation, `DeleteFile` always blocked, `ExecuteCommand` always allowed, system path blocking, path traversal detection.
+- **`Test.GuardrailsHelpers`** — Internal guardrail functions: `hasPathTraversal`, `isBlockedPath`, `isSystemPath` edge cases (subdirectories, trailing slashes).
+- **`Test.ToolRuntime`** — Action extraction functions (`mkReadAction`, `mkWriteAction`, etc.) at the LLM→Action boundary: path/content preservation, failure on invalid JSON, `mkErrorResult` format.
+- **`Test.SchemaInputs`** — JSON round-trips for all five tool input types (`ReadFileInput`, `WriteFileInput`, `ListDirectoryInput`, `SearchFilesInput`, `ExecuteCommandInput`), including optional fields.
+- **`Test.SchemaSerialization`** — JSON Schema encode/decode round-trips: primitives, objects, arrays, composition (`allOf`/`anyOf`/`oneOf`), modifiers (`withTitle`, `withDescription`, constraints), `nullable`, `ref`.
+
+### STANDARD
+
+Properties for important logic that isn't a security boundary.
+
+- **`Test.PromptAssembly`** — Request assembly: model and token fields match config, messages come from the context window, system prompt is always set, tool definitions are included.
+- **`Test.ToolCatalog`** — Catalog integrity: exactly 5 tools registered, all known names resolve, unknown names return `Nothing`, all definitions have non-empty names.
+- **`Test.OrderedMap`** — Monoid laws (identity, associativity), insertion-order invariants (unique keys, size, membership), lookup after insert, union left-biasing, equality is order-insensitive.
+
+### MINIMAL
+
+Smoke-level tests for simple functions where a property test adds confidence without exhaustive coverage.
+
+- **`Test.AgentCore`** — `isQuitCommand` truth table (known commands, case insensitivity, whitespace stripping), `hasToolUse` and `getToolUseBlocks` detection.
+- **`Test.Storage`** — Conversation file persistence: write/read round-trips, ID isolation.
 
 ## CI Behavior
 
@@ -110,3 +148,14 @@ GitHub Actions runs tests automatically:
 Tests run on both Ubuntu and macOS with GHC 9.10.3.
 
 For details, see [the testing strategy explanation](../explanation/testing-strategy.md) or `.github/workflows/ci.yml`.
+
+## Adding Tests for a New Tool
+
+When you add a new tool, add properties in two places:
+
+1. **`test/Test/Guardrails.hs`** — Test that the new `Action` constructor is validated correctly: allowed when safe, blocked when not.
+2. **`test/Test/ToolRuntime.hs`** — Test that `mk*Action` preserves the relevant fields and returns `Left` on invalid JSON input.
+
+Inline generators for `ToolUseBlock` values belong in the test module (following the pattern of `genToolUseBlock` in `Test.ToolRuntime`). Generators for domain types (types defined in `Types.hs`) belong in `test/Test/Generators.hs`.
+
+See [How to Add a Tool](adding-a-tool.md) for the full step-by-step.

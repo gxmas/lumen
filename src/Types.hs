@@ -25,6 +25,12 @@ module Types
   , Role (..)
   , SystemPrompt (..)
   , StopReason (..)
+
+    -- * Tool types (re-exports)
+  , ToolUseBlock (..)
+  , ToolResultBlock (..)
+  , ToolResultContent (..)
+  , ToolDefinition (..)
   ) where
 
 import Data.Aeson (FromJSON, ToJSON)
@@ -41,6 +47,9 @@ import Anthropic.Types
   , StopReason (..)
   )
 import Anthropic.Protocol.Message (Message (..))
+import Anthropic.Types.Content.ToolUse (ToolUseBlock (..))
+import Anthropic.Types.Content.ToolResult (ToolResultBlock (..), ToolResultContent (..))
+import Anthropic.Protocol.Tool (ToolDefinition (..))
 
 -- | Agent configuration.
 --

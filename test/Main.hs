@@ -10,6 +10,13 @@ import qualified Test.Types
 import qualified Test.PromptAssembly
 import qualified Test.AgentCore
 import qualified Test.Storage
+import qualified Test.ToolCatalog
+import qualified Test.Guardrails
+import qualified Test.ToolRuntime
+import qualified Test.GuardrailsHelpers
+import qualified Test.SchemaInputs
+import qualified Test.OrderedMap
+import qualified Test.SchemaSerialization
 
 main :: IO ()
 main = defaultMain tests
@@ -21,4 +28,11 @@ tests = testGroup "Lumen Agent Tests"
   , testGroup "PromptAssembly (STANDARD)" Test.PromptAssembly.properties
   , testGroup "AgentCore (MINIMAL)" Test.AgentCore.properties
   , testGroup "Storage (MINIMAL)" Test.Storage.properties
+  , testGroup "ToolCatalog (STANDARD)" Test.ToolCatalog.properties
+  , testGroup "Guardrails (CRITICAL)" Test.Guardrails.properties
+  , testGroup "ToolRuntime (CRITICAL)" Test.ToolRuntime.properties
+  , testGroup "Guardrails Helpers (CRITICAL)" Test.GuardrailsHelpers.properties
+  , testGroup "Schema Inputs (CRITICAL)" Test.SchemaInputs.properties
+  , testGroup "OrderedMap (STANDARD)" Test.OrderedMap.properties
+  , testGroup "Schema Serialization (CRITICAL)" Test.SchemaSerialization.properties
   ]
