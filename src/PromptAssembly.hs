@@ -1,8 +1,7 @@
 -- | Build MessageRequest from conversation state.
 --
--- This module constructs the prompts and requests sent to the LLM.
--- Phase 1: text-only, no tools.
--- Phase 2 will add tool definitions.
+-- This module constructs the prompts and requests sent to the LLM,
+-- including tool definitions for tool-assisted conversations.
 module PromptAssembly
   ( -- * Request assembly
     assembleRequest
@@ -16,16 +15,17 @@ import Anthropic.Protocol.Message
   ( MessageRequest
   , messageRequest
   , withSystem
+  , withTools
   )
 import Anthropic.Types (ModelId (..), SystemPrompt (..))
 
 import Types (AgentState (..), AgentConfig (..))
 import Conversation (getContextWindow)
+import ToolCatalog (allTools)
 
 -- | Assemble a MessageRequest from the current agent state.
 --
--- Phase 1: Uses all messages in the conversation as context.
--- Phase 2 will add tool definitions.
+-- Includes all registered tools so Claude can use them.
 assembleRequest :: AgentState -> MessageRequest
 assembleRequest state =
   let config = state.config
@@ -34,9 +34,10 @@ assembleRequest state =
         (ModelId config.model)
         msgs
         config.maxTokens
-  in case config.systemPrompt of
-       Nothing -> baseRequest & withSystem defaultSystemPrompt
-       Just sp -> baseRequest & withSystem sp
+      withSys = case config.systemPrompt of
+        Nothing -> baseRequest & withSystem defaultSystemPrompt
+        Just sp -> baseRequest & withSystem sp
+  in withSys & withTools allTools
 
 -- | Default system prompt for the Lumen agent.
 --

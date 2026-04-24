@@ -27,10 +27,11 @@ assembleRequest :: AgentState -> MessageRequest
 4. Attaches the system prompt:
    - If `config.systemPrompt` is `Just sp`, uses `sp`
    - If `config.systemPrompt` is `Nothing`, uses `defaultSystemPrompt`
+5. Injects all registered tool definitions via `withTools allTools`
 
 **Note:** This is a pure function — it does not perform any IO.
 
-> **Phase 1 note:** No tool definitions are included in the request. Phase 2 will add tool definitions here.
+**Tool injection:** `withTools allTools` adds the 5 tool definitions (`read_file`, `write_file`, `list_directory`, `search_files`, `execute_command`) to every request. This tells Claude which tools are available and provides their input schemas. Without this step, the model would not produce `tool_use` blocks.
 
 ## defaultSystemPrompt
 

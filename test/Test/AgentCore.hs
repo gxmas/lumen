@@ -12,13 +12,26 @@ import Hedgehog
 import qualified Hedgehog.Gen as Gen
 import qualified Hedgehog.Range as Range
 
+import Anthropic.Types (ContentBlock (..))
+import Anthropic.Types.Content.Text (TextBlock (..))
+import Anthropic.Types.Content.ToolUse (ToolUseBlock (..))
+import qualified Data.Aeson as Aeson
+
 import Test.Generators (genQuitCommand, genNonQuitCommand)
-import AgentCore (isQuitCommand)
+import AgentCore (isQuitCommand, hasToolUse, getToolUseBlocks)
 
 -- | All properties for the AgentCore module.
 properties :: [TestTree]
 properties =
-  [ testGroup "isQuitCommand"
+  [ testGroup "hasToolUse"
+      [ testProperty "Empty blocks have no tool use"
+          prop_hasToolUse_empty
+      , testProperty "Text-only blocks have no tool use"
+          prop_hasToolUse_text_only
+      , testProperty "Blocks with ToolUseContent detected"
+          prop_hasToolUse_with_tool
+      ]
+  , testGroup "isQuitCommand"
       [ testProperty "Recognizes known quit commands"
           prop_isQuitCommand_accepts_quit_variants
       , testProperty "Case insensitive"
@@ -91,3 +104,22 @@ prop_isQuitCommand_truth_table = property $ do
   assert $ not $ isQuitCommand "help"
   assert $ not $ isQuitCommand "quit me"
   assert $ not $ isQuitCommand "quitter"
+
+-- | hasToolUse - Empty blocks have no tool use
+prop_hasToolUse_empty :: Property
+prop_hasToolUse_empty = withTests 1 $ property $ do
+  assert $ not (hasToolUse [])
+
+-- | hasToolUse - Text-only blocks have no tool use
+prop_hasToolUse_text_only :: Property
+prop_hasToolUse_text_only = withTests 1 $ property $ do
+  let blocks = [TextContent $ TextBlock "hello" Nothing Nothing]
+  assert $ not (hasToolUse blocks)
+
+-- | hasToolUse - Detects ToolUseContent blocks
+prop_hasToolUse_with_tool :: Property
+prop_hasToolUse_with_tool = withTests 1 $ property $ do
+  let toolBlock = ToolUseContent $ ToolUseBlock "id1" "read_file" (Aeson.object []) Nothing
+  let blocks = [TextContent $ TextBlock "thinking" Nothing Nothing, toolBlock]
+  assert $ hasToolUse blocks
+  getToolUseBlocks blocks === [ToolUseBlock "id1" "read_file" (Aeson.object []) Nothing]

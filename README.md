@@ -1,21 +1,24 @@
 # Lumen Agent
 
-A conversational AI agent built in Haskell with Claude API integration.
+A Haskell AI coding agent with tool execution and safety guardrails.
 
 **Project Code Name:** Dawn  
-**Current Phase:** Phase 1 (Text-only conversation with persistence)
+**Current Phase:** MVP (conversation with tool execution)
 
 ## Overview
 
-Lumen is a text-based REPL agent that maintains conversation history across sessions. It demonstrates clean functional architecture with comprehensive property-based testing.
+Lumen is a text-based REPL agent that converses with Claude and executes tools on your behalf — reading files, writing files, listing directories, searching, and running shell commands. All file operations are validated by a safety guardrails layer before execution. Conversation history persists across sessions.
+
+The project demonstrates clean functional architecture with comprehensive property-based testing: a pure core surrounded by a thin IO shell, with each layer independently tested.
 
 ### Features
 
-- ✅ Interactive REPL with conversation history
-- ✅ JSON-based conversation persistence
+- ✅ Interactive REPL with persistent conversation history
+- ✅ Tool execution: `read_file`, `write_file`, `list_directory`, `search_files`, `execute_command`
+- ✅ Safety guardrails: path traversal blocking, system path blocking, file deletion denial
+- ✅ JSON-based conversation persistence (resumes on restart)
 - ✅ Anthropic Claude API integration
-- ✅ Comprehensive property-based testing (31 properties)
-- 🚧 Phase 2: Tool execution with safety guardrails (planned)
+- ✅ 110 property-based tests across 12 modules
 
 ## Quick Start
 
@@ -53,9 +56,20 @@ Start the agent and begin conversing:
 
 ```bash
 $ cabal run lumen
-Starting new conversation: default
-> Hello, who are you?
-I'm Lumen, a helpful AI assistant...
+===================================
+    Lumen Agent (MVP)
+===================================
+Model: claude-sonnet-4-20250514
+Conversation: default
+Tools: read_file, write_file, list_directory, search_files, execute_command
+
+Type 'quit' to exit
+
+> What files are in the current directory?
+[tool] list_directory
+[result] README.md lumen.cabal src/ test/ app/
+
+Here are the files in the current directory: ...
 
 > quit
 Goodbye!
@@ -63,36 +77,71 @@ Goodbye!
 
 ### Commands
 
-- `quit`, `exit`, `q`, `:q` - Exit the REPL
-- Regular text - Send a message to the agent
+- `quit`, `exit`, `q`, `:q` — Exit the REPL
+- Regular text — Send a message to the agent
 
 ### Conversation Management
 
-Conversations are automatically saved to `~/.lumen/conversations/` after each turn. On restart, Lumen resumes the previous conversation.
+Conversations are automatically saved to `~/.lumen/conversations/` after each turn, including tool use and tool result turns. On restart, Lumen resumes the previous conversation.
+
+Use `--conversation-id` to maintain separate conversations:
+
+```bash
+lumen --conversation-id work
+lumen --conversation-id personal
+```
+
+## Tools
+
+The agent has access to 5 tools, all from the `anthropic-tools-common` library:
+
+| Tool | Description |
+|------|-------------|
+| `read_file` | Read a file's contents |
+| `write_file` | Write content to a file |
+| `list_directory` | List entries in a directory |
+| `search_files` | Search for files matching a pattern |
+| `execute_command` | Run a shell command |
+
+All file and directory operations are validated by `Guardrails` before execution. File deletion is always denied. Paths containing `..` or pointing to system directories (`/etc`, `/bin`, `/usr`, etc.) are blocked by default.
 
 ## Architecture
+
+9 source modules across two layers:
 
 ```
 lumen/
 ├── src/
-│   ├── Types.hs              # Core data types
+│   ├── Types.hs              # Core data types (AgentConfig, AgentState, SafetyConfig, …)
 │   ├── Conversation.hs       # Pure conversation management
 │   ├── Storage.hs            # JSON persistence
-│   ├── PromptAssembly.hs     # Request construction
+│   ├── PromptAssembly.hs     # Request construction (injects tool definitions)
 │   ├── LLMClient.hs          # Claude API client wrapper
-│   └── AgentCore.hs          # REPL orchestration
+│   ├── AgentCore.hs          # REPL orchestration and tool loop
+│   ├── ToolCatalog.hs        # Tool registry (allTools, lookupTool)
+│   ├── Guardrails.hs         # Safety validation (pure)
+│   └── ToolRuntime.hs        # Tool execution (wires Guardrails to executors)
 ├── test/
 │   ├── Main.hs               # Test runner
 │   └── Test/
-│       ├── Generators.hs     # Hedgehog generators
-│       ├── Types.hs          # JSON round-trip tests
-│       ├── Conversation.hs   # Conversation logic tests
-│       ├── PromptAssembly.hs # Request assembly tests
-│       ├── AgentCore.hs      # Command parsing tests
-│       └── Storage.hs        # Path safety tests
+│       ├── Generators.hs       # Hedgehog generators
+│       ├── Types.hs            # JSON round-trip tests
+│       ├── Conversation.hs     # Conversation logic tests
+│       ├── PromptAssembly.hs   # Request assembly tests
+│       ├── AgentCore.hs        # Command parsing and tool detection tests
+│       ├── Storage.hs          # Path safety tests
+│       ├── ToolCatalog.hs      # Tool registry tests
+│       ├── Guardrails.hs       # Validation rule tests
+│       ├── GuardrailsHelpers.hs# Path helper tests
+│       ├── ToolRuntime.hs      # Action extraction tests
+│       ├── OrderedMap.hs       # Ordered map invariant tests
+│       ├── SchemaInputs.hs     # Tool input schema tests
+│       └── SchemaSerialization.hs # Schema JSON round-trip tests
 └── app/
-    └── Main.hs               # Entry point
+    └── Main.hs               # Entry point and CLI parsing
 ```
+
+**Design principle:** Pure functions (Conversation, PromptAssembly, Guardrails, ToolCatalog) are separated from IO (Storage, LLMClient, ToolRuntime, AgentCore). The pure core is fully exercised by property-based tests; IO boundaries are tested where possible.
 
 ## Testing
 
@@ -100,15 +149,22 @@ Lumen uses **property-based testing** with [Hedgehog](https://hedgehog.qa/) to e
 
 ### Test Coverage
 
-**31 properties across 5 modules:**
+**110 properties across 13 test modules:**
 
 | Module | Category | Properties | Description |
 |--------|----------|------------|-------------|
 | **Types** | CRITICAL | 5 | JSON serialization round-trips |
 | **Conversation** | CRITICAL | 12 | Pure message list operations |
-| **PromptAssembly** | STANDARD | 5 | Request assembly validation |
-| **AgentCore** | MINIMAL | 5 | Command recognition |
+| **PromptAssembly** | STANDARD | 6 | Request assembly validation |
+| **AgentCore** | MINIMAL | 8 | Command recognition, tool detection |
 | **Storage** | MINIMAL | 4 | Path safety checks |
+| **ToolCatalog** | STANDARD | 5 | Tool registry lookup and completeness |
+| **Guardrails** | CRITICAL | 10 | Path validation, action rules |
+| **GuardrailsHelpers** | CRITICAL | 9 | Path traversal and system path detection |
+| **ToolRuntime** | CRITICAL | 9 | Action extraction, error result construction |
+| **OrderedMap** | STANDARD | 16 | Ordered map invariants |
+| **SchemaInputs** | STANDARD | 7 | Tool input schema parsing |
+| **SchemaSerialization** | STANDARD | 19 | Tool schema JSON round-trips |
 
 ### Running Tests
 
@@ -126,7 +182,7 @@ cabal test --test-options="--hedgehog-tests 1000"
 cabal test --test-options="--hedgehog-tests 10000"
 
 # Run specific test group
-cabal test --test-options="--pattern Conversation"
+cabal test --test-options="--pattern Guardrails"
 ```
 
 ### Using Make
@@ -151,16 +207,16 @@ The test suite uses several PBT strategies:
 - **Idempotence**: Repeated operations produce same result
 - **Composition**: Complex operations equal simpler compositions
 
-Example property from `Test.Conversation`:
+Example property from `Test.Guardrails`:
 
 ```haskell
--- addMessage increases conversation length by exactly 1
-prop_addMessage_increases_length :: Property
-prop_addMessage_increases_length = property $ do
-  state <- forAll genAgentState
-  msg <- forAll genMessage
-  let state' = addMessage msg state
-  length (conversation state') === length (conversation state) + 1
+-- A path containing ".." is always blocked, regardless of SafetyConfig
+prop_pathTraversal_alwaysBlocked :: Property
+prop_pathTraversal_alwaysBlocked = property $ do
+  base <- forAll genSafePath
+  let traversalPath = base <> "/../etc/passwd"
+  config <- forAll genSafetyConfig
+  isSafePath traversalPath config === False
 ```
 
 ### Continuous Integration
@@ -178,8 +234,8 @@ See [.github/workflows/ci.yml](.github/workflows/ci.yml) for details.
 
 ### Project Structure
 
-- **Pure functions** (Conversation, PromptAssembly): Fully tested with PBT
-- **I/O boundaries** (Storage, LLMClient, AgentCore): Tested where possible
+- **Pure functions** (Conversation, PromptAssembly, Guardrails, ToolCatalog): Fully tested with PBT
+- **I/O boundaries** (Storage, LLMClient, AgentCore, ToolRuntime): Tested where possible
 - **Domain types** (Types): Comprehensive JSON round-trip tests
 
 ### Adding New Features
@@ -190,6 +246,8 @@ See [.github/workflows/ci.yml](.github/workflows/ci.yml) for details.
 4. Write properties in corresponding test module
 5. Update this README
 
+To add a new tool specifically, see [docs/guides/adding-a-tool.md](docs/guides/adding-a-tool.md).
+
 ### Code Style
 
 - Follow [Haskell Style Guide](https://kowainik.github.io/posts/2019-02-06-style-guide)
@@ -197,23 +255,13 @@ See [.github/workflows/ci.yml](.github/workflows/ci.yml) for details.
 - Enable all warnings (`-Wall -Wcompat`)
 - Document modules and exported functions
 
-## Phase 2 Roadmap
-
-Future enhancements planned:
-
-- [ ] Tool execution framework
-- [ ] File system operations (read/write)
-- [ ] Shell command execution
-- [ ] Safety guardrails (path validation)
-- [ ] State machine testing for tool execution
-- [ ] Context window management (token-based truncation)
-
 ## Dependencies
 
 ### Core Libraries
 - **anthropic-types**: Type definitions for Claude API
 - **anthropic-protocol**: Message protocol implementation
 - **anthropic-client**: HTTP client for Anthropic API
+- **anthropic-tools-common**: Pre-built tool definitions and executors
 - **aeson**: JSON serialization
 - **text**: Text processing
 

@@ -1,17 +1,14 @@
 # How to Add a Tool
 
-This guide explains how to add a new tool to Lumen once Phase 2 (Tool Execution) is implemented.
+This guide explains how to add a new tool to Lumen.
 
-**Prerequisites:** You have completed the Phase 0 walking skeleton (text-only REPL). You understand the pure/IO module split described in [docs/explanation/architecture.md](../explanation/architecture.md). You have read the [Onboarding Guide](../onboarding/guide.md).
+**Prerequisites:** You have completed the [Getting Started guide](../onboarding/getting-started.md). You understand the pure/IO module split described in [docs/explanation/architecture.md](../explanation/architecture.md). You have read the [Onboarding Guide](../onboarding/guide.md).
 
-**Phase 2 is not yet implemented.** The modules described here (`ToolCatalog`, `Guardrails`, `ToolRuntime`) are planned but do not exist yet. This guide describes the planned architecture so contributors know where to add tools when Phase 2 lands. The construction plan is at `~/Projects/design/lumen/implementation/construction-plan.md`.
-
-By the end of this guide you will know:
-- How tools are defined using `anthropic-tools-common`
-- How to write a tool executor
-- How to add guardrails validation for the tool
-- How to wire the tool into `AgentCore`'s dispatch loop
-- How to test the new tool
+By the end of this guide you will have:
+- Defined a new tool using `anthropic-tools-common`'s schema types
+- Added a typed `Action` variant to `Guardrails`
+- Wired the tool into `ToolRuntime`'s dispatch loop
+- Written property tests for the new tool
 
 ---
 
@@ -22,7 +19,7 @@ When the LLM wants to use a tool, it returns a response with `stop_reason = "too
 - `name` — the tool name (e.g., `"read_file"`)
 - `input` — a JSON object matching the tool's declared schema
 
-`AgentCore.runTurn` (in Phase 2) will detect this stop reason, validate each tool use through `Guardrails`, execute it through `ToolRuntime`, and send the results back to the LLM in a new turn.
+`AgentCore.runTurn` detects this stop reason, extracts the `ToolUseBlock` list, and calls `ToolRuntime.executeTool` for each one. Each call validates the action through `Guardrails` before executing anything.
 
 The data flow for a tool-using turn:
 
@@ -30,8 +27,10 @@ The data flow for a tool-using turn:
 LLM returns stop_reason=tool_use
   → AgentCore extracts ToolUseBlock list
   → For each ToolUseBlock:
-      Guardrails.validateAction → Allowed | Blocked
-      ToolRuntime.executeTool  → ToolResultBlock
+      ToolRuntime.executeTool
+        → mkMyToolAction tub         -- extract typed Action
+        → Guardrails.validateAction  -- check safety rules (pure)
+        → executor tub               -- run the IO operation
   → AgentCore adds ToolResult messages to conversation
   → AgentCore sends updated conversation back to LLM
   → LLM returns final text response
@@ -41,223 +40,265 @@ LLM returns stop_reason=tool_use
 
 ## The Three Modules You Touch
 
-### `src/ToolCatalog.hs` — Tool Definitions
+### `src/ToolCatalog.hs` — Tool Registry
 
-This module exports the list of `CustomToolDef` values that get sent to the API in every request. The Anthropic API uses these definitions to decide which tools it can call and how to format the `input` JSON object.
+`ToolCatalog` exports two things used in every API request:
 
-In Phase 2, `ToolCatalog` re-exports pre-built definitions from `anthropic-tools-common` for the five standard tools. A custom tool definition looks like:
+- `allToolDefs :: [CustomToolDef]` — raw definitions for name-based lookup
+- `allTools :: [ToolDefinition]` — the same list wrapped for the API
+
+Tool definitions are built with `customToolDef` and `withDescription` from `Anthropic.Protocol.Tool`, and JSON schemas from `Data.JsonSchema`:
 
 ```haskell
-import Anthropic.Tools.Common (CustomToolDef (..), mkToolDef)
-import Data.JsonSchema (object, property, string, description, required)
+import Anthropic.Protocol.Tool (CustomToolDef, customToolDef, withDescription)
+import Data.JsonSchema (objectSchema, stringSchema, required, optional, withDescription)
+import Data.Function ((&))
 
 myNewToolDef :: CustomToolDef
-myNewToolDef = mkToolDef
-  { toolName        = "my_new_tool"
-  , toolDescription = "A brief description the LLM uses to decide when to call this tool."
-  , toolInputSchema = object
-      [ property "param_one" (string `description` "The first parameter")
-      , property "param_two" (string `description` "The second parameter")
-      , required ["param_one"]
-      ]
-  }
+myNewToolDef = customToolDef "my_new_tool" myNewToolSchema
+  & withDescription "Does X. Use this when Y. Returns Z."
+
+myNewToolSchema :: Schema
+myNewToolSchema = objectSchema
+  [ required "param_one" $ stringSchema
+      & withDescription "The first parameter"
+  , optional "param_two" $ stringSchema
+      & withDescription "An optional second parameter"
+  ]
 ```
 
-The `toolDescription` field is read by the LLM to decide when to invoke the tool. Write it in plain English. Be specific about what the tool does, what parameters it expects, and any important constraints.
-
-The `toolInputSchema` is a JSON schema using `json-schema-combinators`. The schema is serialized to the `input_schema` field in the Anthropic API request. Every property listed in `required` must be present in the LLM's `input` JSON.
+The description is read by the LLM to decide when to invoke the tool and how to format the `input` JSON. Be specific about what the tool does, what each parameter means, and what the output looks like.
 
 ### `src/Guardrails.hs` — Safety Validation
 
-`Guardrails` checks each `ToolUseBlock` before execution and returns `Allowed` or `Blocked reason`. It enforces path restrictions, blocks system directories, and prevents file deletion.
-
-For a new tool, you add a case to `validateAction`:
+`Guardrails` exposes a typed `Action` ADT. Each tool use is first parsed into an `Action`, which is then validated against `SafetyConfig`. Validation is **pure** — no IO.
 
 ```haskell
--- src/Guardrails.hs
+-- Current Action type
+data Action
+  = ReadFile !FilePath
+  | WriteFile !FilePath !Text
+  | DeleteFile !FilePath
+  | ExecuteCommand !Text
+  deriving stock (Eq, Show)
 
-import Types (SafetyConfig (..), ValidationResult (..))
-import Anthropic.Protocol.Message (ToolUseBlock (..))
-
-validateAction :: ToolUseBlock -> SafetyConfig -> IO ValidationResult
-validateAction tub config = case tub.name of
-  "read_file"    -> validateReadFile tub config
-  "write_file"   -> validateWriteFile tub config
-  "my_new_tool"  -> validateMyNewTool tub config   -- add your case here
-  _              -> pure (Blocked "Unknown tool")
-
-validateMyNewTool :: ToolUseBlock -> SafetyConfig -> IO ValidationResult
-validateMyNewTool tub config = do
-  -- Parse the input to extract relevant parameters
-  -- Apply safety rules
-  -- Return Allowed or Blocked "reason"
-  pure Allowed  -- or: pure (Blocked "reason")
+validateAction :: Action -> SafetyConfig -> ValidationResult
 ```
 
-If your tool does not touch the filesystem or execute processes, a simple `pure Allowed` is sufficient. If it accesses files, apply the same path-checking logic as `validateReadFile` and `validateWriteFile`: use `isSafePath` to verify the path is within `config.allowedPaths` and not in `config.blockedPaths`.
+To add a new tool, you add a constructor to `Action` and a case to `validateAction`. For a tool that accesses files, reuse `isSafePath`. For tools that don't touch the filesystem, `Allowed` is sufficient.
 
 ### `src/ToolRuntime.hs` — Execution
 
-`ToolRuntime` dispatches a validated `ToolUseBlock` to the appropriate executor and returns a `ToolResultBlock`. In Phase 2, the five standard tools delegate to `anthropic-tools-common` executors (`executeReadFile`, `executeWriteFile`, etc.).
-
-Add your tool's executor here:
+`ToolRuntime` dispatches each validated `ToolUseBlock` to the appropriate executor. The `withValidation` helper handles the parse → validate → execute pipeline:
 
 ```haskell
--- src/ToolRuntime.hs
+executeTool :: SafetyConfig -> ToolUseBlock -> IO ToolResultBlock
 
-executeTool :: ToolUseBlock -> IO ToolResultBlock
-executeTool tub = case tub.name of
-  "read_file"   -> Anthropic.Tools.Common.executeReadFile tub
-  "write_file"  -> Anthropic.Tools.Common.executeWriteFile tub
-  "my_new_tool" -> executeMyNewTool tub   -- add your case here
-  name          -> pure $ errorResult tub ("Unknown tool: " <> name)
-
-executeMyNewTool :: ToolUseBlock -> IO ToolResultBlock
-executeMyNewTool tub = do
-  -- 1. Parse typed input using the library helper
-  case parseToolInput tub of
-    Left err -> pure $ errorResult tub (T.pack $ show err)
-    Right (MyNewToolInput { paramOne, paramTwo }) -> do
-      -- 2. Execute the operation
-      result <- performMyNewToolOperation paramOne paramTwo
-      -- 3. Return a ToolResultBlock with the output
-      pure $ successResult tub result
+withValidation
+  :: SafetyConfig
+  -> ToolUseBlock
+  -> (ToolUseBlock -> Either Text Action)  -- mkAction function
+  -> (ToolUseBlock -> IO (Either ExecutionError ToolResultBlock))  -- executor
+  -> IO ToolResultBlock
 ```
 
-`parseToolInput` is from `anthropic-tools-common`. It deserializes `tub.input` as JSON into your typed input record. `successResult` and `errorResult` are helpers that construct the `ToolResultBlock` format the API expects.
+Each tool needs a `mk*Action` function that parses the `ToolUseBlock` input into a typed `Action` value. The existing tools use `parseToolInput` from `Anthropic.Tools.Common.Parser` for this:
+
+```haskell
+mkReadAction :: ToolUseBlock -> Either Text Action
+mkReadAction tub = case parseToolInput tub of
+  Left (ParseError {errorMsg = msg}) -> Left msg
+  Right (input :: ReadFileInput)     -> Right $ ReadFile (T.unpack input.path)
+```
 
 ---
 
 ## Step-by-Step: Adding a New Tool
 
-### Step 1: Define the input type
+This example adds a `fetch_url` tool that fetches the contents of a URL.
 
-Add a typed input record to `src/Types.hs` or to the tool's own module:
+### Step 1: Define the input type and schema
+
+The `anthropic-tools-common` library already provides `FetchUrlInput` and `fetchUrlSchema` in `Anthropic.Tools.Common.Schema`. For a custom tool, you add these to `src/Types.hs` or a new module:
 
 ```haskell
 -- In src/Types.hs or a new src/Tools/MyNewTool.hs
 
 data MyNewToolInput = MyNewToolInput
   { paramOne :: !Text
-  , paramTwo :: !(Maybe Text)   -- optional parameter
+  , paramTwo :: !(Maybe Text)
   }
   deriving stock (Eq, Show, Generic)
-  deriving anyclass (FromJSON)
+
+instance ToJSON MyNewToolInput where
+  toJSON = Aeson.genericToJSON customOptions  -- use camelTo2 '_' like other Schema types
+  toEncoding = Aeson.genericToEncoding customOptions
+
+instance FromJSON MyNewToolInput where
+  parseJSON = Aeson.genericParseJSON customOptions
+
+myNewToolSchema :: Schema
+myNewToolSchema = objectSchema
+  [ required "param_one" $ stringSchema
+      & withDescription "Description of param_one"
+  , optional "param_two" $ stringSchema
+      & withDescription "Description of param_two (optional)"
+  ]
 ```
 
-The `FromJSON` instance is what `parseToolInput` uses to deserialize the LLM's `input` JSON. Field names must match the `property` names in the JSON schema exactly.
+**Field names must match.** The schema uses `snake_case` (`"param_one"`). The `FromJSON` instance with `camelTo2 '_'` converts `paramOne` → `"param_one"` automatically. If you write the instances by hand, use the same snake_case names in both.
 
 ### Step 2: Write the tool definition
 
-Add `myNewToolDef :: CustomToolDef` to `src/ToolCatalog.hs` using `json-schema-combinators`:
+Add `myNewToolDef :: CustomToolDef` to `src/ToolCatalog.hs` and add it to `allToolDefs`:
 
 ```haskell
+-- src/ToolCatalog.hs
+
+import Anthropic.Protocol.Tool (CustomToolDef, customToolDef, withDescription)
+import Data.Function ((&))
+
 myNewToolDef :: CustomToolDef
-myNewToolDef = mkToolDef
-  { toolName        = "my_new_tool"
-  , toolDescription = "Does X. Use this when Y. Returns Z."
-  , toolInputSchema = object
-      [ property "param_one" (string `description` "Description of param_one")
-      , property "param_two" (string `description` "Description of param_two (optional)")
-      , required ["param_one"]
-      ]
-  }
+myNewToolDef = customToolDef "my_new_tool" myNewToolSchema
+  & withDescription "Does X. Use this when Y. Returns Z."
+
+allToolDefs :: [CustomToolDef]
+allToolDefs =
+  let fs = fileSystemTools
+      sh = shellTools
+  in [ fs.readFile
+     , fs.writeFile
+     , fs.listDirectory
+     , fs.searchFiles
+     , sh.executeCommand
+     , myNewToolDef       -- add here
+     ]
 ```
 
-Then add it to the exported catalog:
+The `allTools` export (used in API requests) is derived from `allToolDefs` automatically — you don't need to update it separately.
+
+### Step 3: Add a typed Action constructor
+
+In `src/Guardrails.hs`, add a constructor to the `Action` type and a case to `validateAction`:
 
 ```haskell
-toolCatalog :: [CustomToolDef]
-toolCatalog =
-  [ readFileDef
-  , writeFileDef
-  , listDirectoryDef
-  , executeCommandDef
-  , searchFilesDef
-  , myNewToolDef    -- add here
-  ]
+-- src/Guardrails.hs
+
+data Action
+  = ReadFile !FilePath
+  | WriteFile !FilePath !Text
+  | DeleteFile !FilePath
+  | ExecuteCommand !Text
+  | MyNewAction !Text   -- add your constructor
+  deriving stock (Eq, Show)
+
+validateAction :: Action -> SafetyConfig -> ValidationResult
+validateAction action config = case action of
+  ReadFile path
+    | isSafePath path config -> Allowed
+    | otherwise -> Blocked $ "Read blocked: " <> T.pack path
+  -- ... existing cases ...
+  MyNewAction param
+    | isValidParam param -> Allowed
+    | otherwise -> Blocked "Invalid parameter for my_new_tool"
 ```
 
-### Step 3: Add guardrails validation
-
-In `src/Guardrails.hs`, add a case to `validateAction` and implement `validateMyNewTool`. For filesystem-touching tools, reuse `isSafePath`:
+If your tool accesses files, validate the path with `isSafePath`:
 
 ```haskell
-validateMyNewTool :: ToolUseBlock -> SafetyConfig -> IO ValidationResult
-validateMyNewTool tub config =
-  case parseToolInput tub of
-    Left _ -> pure (Blocked "Invalid tool input")
-    Right (MyNewToolInput { paramOne }) ->
-      if isSafePath (T.unpack paramOne) config
-        then pure Allowed
-        else pure (Blocked "Path outside allowed directories")
+  MyNewAction path
+    | isSafePath (T.unpack path) config -> Allowed
+    | otherwise -> Blocked $ "Path blocked: " <> path
 ```
 
-If your tool does not touch files or run processes, you may not need any validation beyond confirming the input parses correctly.
-
-### Step 4: Implement the executor
-
-In `src/ToolRuntime.hs`, add the case and implement `executeMyNewTool`:
+If your tool doesn't touch the filesystem or run processes, `Allowed` is sufficient:
 
 ```haskell
-executeMyNewTool :: ToolUseBlock -> IO ToolResultBlock
+  MyNewAction _ -> Allowed
+```
+
+### Step 4: Add the action extractor and executor case
+
+In `src/ToolRuntime.hs`, add a `mk*Action` function and a case to `executeTool`:
+
+```haskell
+-- src/ToolRuntime.hs
+
+-- Add to executeTool's case expression:
+executeTool :: SafetyConfig -> ToolUseBlock -> IO ToolResultBlock
+executeTool safetyConfig tub = case tub.name of
+  "read_file"    -> withValidation safetyConfig tub mkReadAction executeReadFile
+  -- ... existing cases ...
+  "my_new_tool"  -> withValidation safetyConfig tub mkMyNewAction executeMyNewTool
+  other          -> pure $ mkErrorResult tub $ "Unknown tool: " <> other
+
+-- Add the action extractor:
+mkMyNewAction :: ToolUseBlock -> Either Text Action
+mkMyNewAction tub = case parseToolInput tub of
+  Left (ParseError {errorMsg = msg}) -> Left msg
+  Right (input :: MyNewToolInput)    -> Right $ MyNewAction input.paramOne
+```
+
+For the executor, implement the IO operation and return `IO (Either ExecutionError ToolResultBlock)`:
+
+```haskell
+import Anthropic.Tools.Common.Executor (ExecutionError (..))
+
+executeMyNewTool :: ToolUseBlock -> IO (Either ExecutionError ToolResultBlock)
 executeMyNewTool tub =
   case parseToolInput tub of
-    Left err -> pure $ errorResult tub (T.pack $ show err)
-    Right input -> do
-      -- Perform the operation
-      result <- myOperation input.paramOne input.paramTwo
+    Left err -> pure $ Left (ToolParseError err)
+    Right (input :: MyNewToolInput) -> do
+      result <- myOperation (T.unpack input.paramOne) input.paramTwo
       case result of
-        Left err  -> pure $ errorResult tub err
-        Right out -> pure $ successResult tub out
+        Left ioErr -> pure $ Left (ToolIOError ioErr)
+        Right out  -> pure $ Right ToolResultBlock
+          { toolUseId    = tub.id
+          , content      = Just (ToolResultText out)
+          , isError      = Nothing
+          , cacheControl = Nothing
+          }
 ```
 
-The output passed to `successResult` should be a human-readable `Text` that the LLM can interpret as the tool's result. For file contents, return the raw content. For command output, return stdout. For errors, include enough context for the LLM to respond sensibly to the user.
+The `withValidation` function handles the parse error and validation failure cases for you — your executor only needs to handle success and IO errors.
 
-### Step 5: Write a Hedgehog generator
+### Step 5: Write property tests
 
-Add a generator for `MyNewToolInput` in `test/Test/Generators.hs`:
+Add tests for the new action extractor in `test/Test/ToolRuntime.hs`:
 
 ```haskell
-genMyNewToolInput :: Gen MyNewToolInput
-genMyNewToolInput = do
-  paramOne <- Gen.text (Range.linear 1 100) Gen.unicode
-  paramTwo <- Gen.maybe $ Gen.text (Range.linear 0 100) Gen.unicode
-  pure MyNewToolInput { paramOne, paramTwo }
+-- In Test.ToolRuntime.properties:
+, testProperty "P1: mkMyNewAction extracts param"
+    prop_mkMyNewAction_extracts_param
+
+-- Property:
+prop_mkMyNewAction_extracts_param :: Property
+prop_mkMyNewAction_extracts_param = property $ do
+  param <- forAll $ Gen.text (Range.linear 1 100) Gen.unicode
+  tub <- forAll $ genToolUseBlock "my_new_tool"
+    (Aeson.object ["param_one" Aeson..= param])
+  case mkMyNewAction tub of
+    Right (MyNewAction extracted) -> extracted === param
+    other -> do
+      annotate $ "Expected Right (MyNewAction _), got: " <> show other
+      failure
 ```
 
-### Step 6: Write property tests
-
-Create `test/Test/Tools/MyNewTool.hs`:
+Add tests for the guardrails validation in `test/Test/Guardrails.hs`:
 
 ```haskell
-module Test.Tools.MyNewTool (properties) where
+, testProperty "P5: MyNewAction with valid param is allowed"
+    prop_myNewAction_valid_allowed
 
-import Test.Tasty (TestTree, testGroup)
-import Test.Tasty.Hedgehog (testProperty)
-import Hedgehog
-import Test.Generators (genMyNewToolInput)
-import Tools.MyNewTool (executeMyNewTool)
-
-properties :: [TestTree]
-properties =
-  [ testGroup "MyNewTool"
-      [ testProperty "valid input succeeds" prop_valid_input_succeeds
-      , testProperty "JSON round-trip" prop_json_roundtrip
-      ]
-  ]
-
--- Example: if paramOne is always non-empty, the tool should not return an error
-prop_valid_input_succeeds :: Property
-prop_valid_input_succeeds = property $ do
-  input <- forAll genMyNewToolInput
-  -- assert something about executeMyNewTool input
-  -- ...
+prop_myNewAction_valid_allowed :: Property
+prop_myNewAction_valid_allowed = property $ do
+  param <- forAll $ Gen.text (Range.linear 1 100) Gen.unicode
+  validateAction (MyNewAction param) permissiveConfig === Allowed
 ```
 
-Add the module to `other-modules` in `lumen.cabal` and import it in `test/Main.hs`.
+Generators for domain types (like `MyNewToolInput`) belong in `test/Test/Generators.hs`. Tool-specific generators (like `genToolUseBlock` for a specific tool) can live inline in the test module.
 
-### Step 7: Verify
+### Step 6: Verify
 
 ```bash
 cabal build all     # must build with no warnings
@@ -270,11 +311,13 @@ Then run the agent and ask it to use your new tool to confirm end-to-end behavio
 
 ## Common Pitfalls
 
-**Schema field names must match the input type.** If your schema has `"param_one"` but your `FromJSON` instance expects `paramOne` (camelCase), deserialization will fail silently at runtime. Use `snake_case` in both the schema and the JSON field names, and add `Options { fieldLabelModifier = camelToSnake }` to your `FromJSON` instance if needed.
+**Schema field names must match the input type.** If your schema has `"param_one"` but your `FromJSON` instance expects `"paramOne"` (camelCase), deserialization will fail silently at runtime. Use `camelTo2 '_'` options in your JSON instances, as all existing schema types do.
 
-**Guardrails must parse input safely.** If `parseToolInput` fails in `validateMyNewTool`, return `Blocked "Invalid tool input"` rather than crashing. The LLM can send malformed input.
+**Guardrails must parse input in the Action extractor, not in validateAction.** The `mk*Action` function in `ToolRuntime` extracts the path or parameter from the raw JSON. `validateAction` receives a fully-typed `Action` and never sees the `ToolUseBlock` directly. This separation keeps guardrails pure and testable without JSON.
 
-**Error results must include the tool use ID.** Both `successResult` and `errorResult` require the original `ToolUseBlock` to extract `tub.id`. The API requires the `tool_use_id` in every `tool_result` content block.
+**Add a constructor to the Action ADT.** Forgetting to add a case to `validateAction` for your new `Action` constructor causes a GHC warning (`-Werror` in CI will catch this). The case expression must be exhaustive.
+
+**Error results must include the tool use ID.** `mkErrorResult tub msg` requires the original `ToolUseBlock` to populate `toolUseId`. The API requires `tool_use_id` in every `tool_result` content block.
 
 **Tool descriptions are read by the LLM.** A vague description leads to the LLM calling the tool at wrong times or with wrong parameters. Be specific about what the tool does, what each parameter means, and what the output looks like.
 
@@ -283,7 +326,6 @@ Then run the agent and ask it to use your new tool to confirm end-to-end behavio
 ## Further Reading
 
 - [Architecture explanation](../explanation/architecture.md) — the pure/IO split and why `ToolRuntime` is an IO module
-- [Contributing guide](contributing.md) — full PR checklist, code style, test requirements
 - [Types reference](../reference/types.md) — `ValidationResult`, `SafetyConfig`
-- Design documents at `~/Projects/design/lumen/design/mvp-contracts.md` — the full Guardrails and Tool Runtime contracts
-- `~/Projects/design/lumen/implementation/construction-plan.md` — Phase 2 build order
+- [Contributing guide](contributing.md) — full PR checklist, code style, test requirements
+- `anthropic-tools-common` — `Schema.hs` for input types, `Executor.hs` for execution helpers, `Parser.hs` for `parseToolInput`

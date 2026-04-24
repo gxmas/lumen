@@ -4,6 +4,7 @@
 -- Category: STANDARD (important but less critical than data layer)
 module Test.PromptAssembly (properties) where
 
+import Data.Maybe (isJust)
 import qualified Data.Text as T
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.Hedgehog (testProperty)
@@ -29,6 +30,10 @@ properties =
           prop_assembleRequest_messages_from_context
       , testProperty "System prompt is set"
           prop_assembleRequest_includes_system_prompt
+      ]
+  , testGroup "tools"
+      [ testProperty "Tools are included in assembled request"
+          prop_assembleRequest_includes_tools
       ]
   , testGroup "defaultSystemPrompt"
       [ testProperty "Default system prompt is non-empty"
@@ -81,6 +86,20 @@ prop_assembleRequest_includes_system_prompt = property $ do
       case systemPrompt (config state) of
         Nothing -> sp === defaultSystemPrompt
         Just custom -> sp === custom
+
+-- | assembleRequest - Tools Included (P2)
+--
+-- The request should include tool definitions.
+prop_assembleRequest_includes_tools :: Property
+prop_assembleRequest_includes_tools = property $ do
+  state <- forAll genAgentState
+  let req = assembleRequest state
+  assert $ isJust req.tools
+  case req.tools of
+    Just tools -> length tools === 5
+    Nothing -> do
+      annotate "Expected tools to be set"
+      failure
 
 -- | defaultSystemPrompt - Is Non-Empty (P3)
 --

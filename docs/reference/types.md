@@ -54,8 +54,6 @@ data SafetyConfig = SafetyConfig
 
 **Instances:** `Eq`, `Show`, `Generic`, `ToJSON`, `FromJSON`
 
-> **Phase 1 note:** This type is defined but unused. It exists for forward compatibility with Phase 2 tool execution.
-
 ## AgentState
 
 Agent runtime state tracking the current conversation and mutable state during a session.
@@ -140,8 +138,6 @@ data ValidationResult
 
 **Instances:** `Eq`, `Show`, `Generic`, `ToJSON`, `FromJSON`
 
-> **Phase 1 note:** This type is defined but unused. It exists for forward compatibility with Phase 2 tool execution.
-
 ## Re-exported Types
 
 The following types are re-exported from the `anthropic-types` and `anthropic-protocol` libraries for convenience. Downstream modules import them from `Types` rather than the library packages directly.
@@ -175,7 +171,7 @@ data ContentBlock
   | ...
 ```
 
-From `Anthropic.Types`. Phase 1 only uses `TextContent` blocks.
+From `Anthropic.Types`. MVP uses `TextContent` blocks (text responses) and `ToolUseContent` blocks (tool use requests from the LLM).
 
 ### Role
 
@@ -202,3 +198,49 @@ data StopReason = EndTurn | MaxTokens | StopSequence | ...
 ```
 
 From `Anthropic.Types`. Indicates why the model stopped generating.
+
+### ToolUseBlock
+
+```haskell
+data ToolUseBlock = ToolUseBlock
+  { id    :: !Text
+  , name  :: !Text
+  , input :: !Value  -- JSON object
+  }
+```
+
+From `Anthropic.Types.Content.ToolUse`. Represents a single tool use request from the LLM. The `id` field links this request to its corresponding `ToolResultBlock`. The `input` field is the JSON object the LLM produced as arguments; `ToolRuntime` parses it into the appropriate typed input (e.g., `ReadFileInput`).
+
+### ToolResultBlock
+
+```haskell
+data ToolResultBlock = ToolResultBlock
+  { toolUseId    :: !Text
+  , content      :: !(Maybe ToolResultContent)
+  , isError      :: !(Maybe Bool)
+  , cacheControl :: !(Maybe CacheControl)
+  }
+```
+
+From `Anthropic.Types.Content.ToolResult`. Represents the result of executing a tool, sent back to the LLM as part of a user message. `toolUseId` must match the `id` of the originating `ToolUseBlock`. Set `isError = Just True` to signal a failed execution; Claude will incorporate the error into its next response.
+
+### ToolResultContent
+
+```haskell
+data ToolResultContent
+  = ToolResultText !Text
+  | ToolResultBlocks ![ContentBlock]
+```
+
+From `Anthropic.Types.Content.ToolResult`. The payload of a tool result. MVP always uses `ToolResultText` — the executor output is a single text string. `ToolRuntime.mkErrorResult` also uses `ToolResultText` for error messages.
+
+### ToolDefinition
+
+```haskell
+data ToolDefinition
+  = CustomTool !CustomToolDef
+  | ComputerUseTool !ComputerUseToolDef
+  | ...
+```
+
+From `Anthropic.Protocol.Tool`. Wraps a tool definition for inclusion in a `MessageRequest`. `ToolCatalog.allTools` produces `[ToolDefinition]` by mapping `CustomTool` over `allToolDefs`. `PromptAssembly.assembleRequest` passes this list to `withTools`.
