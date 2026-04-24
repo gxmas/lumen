@@ -1,0 +1,21 @@
+cabal-version:      3.0
+name:               lumen-planning
+version:            0.1.0.0
+synopsis:           Lumen — Planning (stub)
+license:            MIT
+license-file:       LICENSE
+author:             Geoffrey Noël
+maintainer:         noel.geoff@gmail.com
+category:           Development
+build-type:         Simple
+
+common shared-properties
+    default-language: GHC2021
+    ghc-options: -Wall -Wcompat -Wunused-packages
+    default-extensions: OverloadedStrings
+
+library
+    import:           shared-properties
+    hs-source-dirs:   src
+    exposed-modules:  Lumen.Planning.Core
+    build-depends:    base >=4.18 && <5

@@ -5,12 +5,13 @@ Sequence diagram showing a single conversation turn — from user input to displ
 ```mermaid
 sequenceDiagram
     participant User
-    participant AC as AgentCore
-    participant Conv as Conversation
-    participant PA as PromptAssembly
-    participant LLC as LLMClient
+    participant AC as Agent.Core
+    participant Conv as Conversation.Core
+    participant PA as LLM.PromptAssembly
+    participant LLC as LLM.Client
     participant API as Anthropic API
-    participant Store as Storage
+    participant TR as Tools.Runtime
+    participant Store as Foundation.Storage
 
     User->>AC: types message
     AC->>AC: wrap as userMessage(TextMessage input)
@@ -20,17 +21,27 @@ sequenceDiagram
     AC->>PA: assembleRequest(stateWithUser)
     PA->>Conv: getContextWindow(stateWithUser)
     Conv-->>PA: [messages]
-    PA-->>AC: MessageRequest
+    PA-->>AC: MessageRequest (with tool definitions)
 
     AC->>LLC: sendRequest(client, request)
     LLC->>API: POST /v1/messages
     API-->>LLC: MessageResponse
     LLC-->>AC: Right response
 
-    AC->>AC: displayResponse (print text blocks)
-    AC->>AC: wrap as assistantMessage(BlockMessage content)
-    AC->>Conv: addMessage(assistantMsg, stateWithUser)
-    Conv-->>AC: finalState (turnCount + 1)
+    alt response has tool_use blocks
+        AC->>Conv: addMessage(assistantMsg with tool_use)
+        loop for each ToolUseBlock
+            AC->>TR: executeTool(safetyConfig, toolUseBlock)
+            TR-->>AC: ToolResultBlock
+        end
+        AC->>Conv: addMessage(user message with tool results)
+        Note over AC,API: Loop: re-assemble and re-send
+    else response is text only
+        AC->>AC: displayResponse (print text blocks)
+        AC->>AC: wrap as assistantMessage(BlockMessage content)
+        AC->>Conv: addMessage(assistantMsg, stateWithUser)
+        Conv-->>AC: finalState (turnCount + 1)
+    end
 
     AC->>Store: saveConversation(finalState)
     Store->>Store: write JSON to ~/.lumen/conversations/
@@ -45,10 +56,10 @@ When the API returns an error, the flow is shorter:
 ```mermaid
 sequenceDiagram
     participant User
-    participant AC as AgentCore
-    participant Conv as Conversation
-    participant PA as PromptAssembly
-    participant LLC as LLMClient
+    participant AC as Agent.Core
+    participant Conv as Conversation.Core
+    participant PA as LLM.PromptAssembly
+    participant LLC as LLM.Client
     participant API as Anthropic API
 
     User->>AC: types message
@@ -65,8 +76,8 @@ sequenceDiagram
     LLC-->>AC: Left LLMError
 
     AC->>AC: displayError
-    Note over AC: Returns ORIGINAL state<br/>(user message discarded)
+    Note over AC: Returns state unchanged<br/>(processResponse returns stateWithUser)
     AC->>User: display > prompt
 ```
 
-The user's message is **not** saved to the conversation on error. This prevents orphaned messages without responses.
+On API error, `processResponse` returns the state as passed in (which includes the user message). The turn is not retried, and the orphaned user message is persisted on the next save.

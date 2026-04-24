@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main, develop]
+    branches: [main, stable, dev]
   pull_request:
-    branches: [main, develop]
+    branches: [main, stable, dev]
 
 jobs:
   build-and-test:
@@ -41,6 +41,13 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           path: libs/anthropic-client
 
+      - name: Checkout repo anthropic-tools-common
+        uses: actions/checkout@v4
+        with:
+          repository: gxmas/anthropic-tools-common
+          token: ${{ secrets.GITHUB_TOKEN }}
+          path: libs/anthropic-tools-common
+
       - name: Checkout repo json-schema-combinators
         uses: actions/checkout@v4
         with:
@@ -71,7 +78,7 @@ jobs:
         run: cabal update --project-file=cabal.project.ci
 
       - name: Build dependencies
-        run: cabal build --project-file=cabal.project.ci --only-dependencies --enable-tests
+        run: cabal build --project-file=cabal.project.ci --only-dependencies --enable-tests all
 
       - name: Build
         run: cabal build --project-file=cabal.project.ci all
@@ -111,6 +118,13 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           path: libs/anthropic-client
 
+      - name: Checkout repo anthropic-tools-common
+        uses: actions/checkout@v4
+        with:
+          repository: gxmas/anthropic-tools-common
+          token: ${{ secrets.GITHUB_TOKEN }}
+          path: libs/anthropic-tools-common
+
       - name: Checkout repo json-schema-combinators
         uses: actions/checkout@v4
         with:
@@ -138,4 +152,4 @@ jobs:
         run: cabal update --project-file=cabal.project.ci
 
       - name: Build for warnings
-        run: cabal build --project-file=cabal.project.ci all --ghc-options="-Werror"
+        run: cabal build --project-file=cabal.project.ci all --ghc-options="-Werror" all

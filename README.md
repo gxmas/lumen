@@ -284,4 +284,4 @@ Contributions welcome! Please:
 
 ## Author
 
-gnoel5
+Geoffrey Noël

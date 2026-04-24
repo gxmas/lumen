@@ -1,6 +1,6 @@
 # Onboarding with Lumen
 
-Lumen is an AI coding agent implemented in Haskell that serves as a learning vehicle for understanding agentic application patterns. It runs as a terminal REPL backed by the Anthropic Claude API, with persistent conversation history and a modular architecture designed for incremental growth from a minimal MVP to a full-featured coding assistant.
+Lumen is an AI coding agent implemented in Haskell. It runs as a terminal REPL backed by the Anthropic Claude API, with persistent conversation history, tool execution (read/write files, run shell commands), and a multi-package architecture designed for incremental growth. The project also serves as a learning vehicle for agentic application patterns.
 
 ## Table of Contents
 

@@ -4,7 +4,8 @@ API client wrapper for the Anthropic Claude API.
 
 This module provides a simplified interface over `anthropic-client`, handling client creation, request sending, and error mapping.
 
-**Module:** `LLMClient` (`src/LLMClient.hs`)
+**Module:** `Lumen.LLM.Client` (`lumen-llm-core/src/Lumen/LLM/Client.hs`)  
+**Package:** `lumen-llm-core`
 
 ## ClientHandle
 

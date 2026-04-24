@@ -6,9 +6,9 @@ How to add features, write tests, and submit changes to Lumen.
 
 Follow this five-step process:
 
-### 1. Define Types in `src/Types.hs`
+### 1. Define Types
 
-Add any new data types to the shared types module. Use strict fields (`!`) and derive instances:
+If the types are needed across multiple packages, add them to `Lumen.Foundation.Types` (`lumen-runtime-foundation/src/Lumen/Foundation/Types.hs`). If they are local to one package, define them in that package's module. Use strict fields (`!`) and derive instances:
 
 ```haskell
 data MyNewType = MyNewType
@@ -23,22 +23,22 @@ Export the type from the module header.
 
 ### 2. Implement Pure Logic
 
-Create a dedicated module in `src/` for the feature's logic. Keep it pure (no IO) wherever possible:
+Determine which package the feature belongs to (or create a new package for a new architectural concern). Create a dedicated module for the feature's logic. Keep it pure (no IO) wherever possible:
 
 ```haskell
-module MyFeature (myFunction) where
+module Lumen.MyFeature (myFunction) where
 
-import Types (MyNewType (..))
+import Lumen.Foundation.Types (MyNewType (..))
 
 myFunction :: MyNewType -> SomeResult
 myFunction input = ...
 ```
 
-Add the module to `lumen.cabal` under `exposed-modules` in the `library` section.
+Add the module to the package's `.cabal` file under `exposed-modules` in the `library` section.
 
 ### 3. Add Hedgehog Generators
 
-Add generators for your new types in `test/Test/Generators.hs`:
+Add generators for your new types in `lumen-runtime-foundation/test-support/Test/Generators.hs`:
 
 ```haskell
 genMyNewType :: Gen MyNewType
@@ -52,7 +52,7 @@ Generators should produce well-formed values that cover the interesting parts of
 
 ### 4. Write Properties
 
-Create a test module at `test/Test/MyFeature.hs`:
+Create a test module in the same package as the code under test, e.g. `<package>/test/Test/MyFeature.hs`:
 
 ```haskell
 module Test.MyFeature (properties) where
@@ -63,7 +63,7 @@ import qualified Hedgehog.Range as Range
 import Test.Tasty.Hedgehog (testProperty)
 
 import Test.Generators (genMyNewType)
-import MyFeature (myFunction)
+import Lumen.MyFeature (myFunction)
 
 properties :: [TestTree]
 properties =
@@ -76,7 +76,7 @@ prop_myFunction_does_x = property $ do
   -- assert some property about myFunction input
 ```
 
-Add the test module to `lumen.cabal` under `other-modules` in the `test-suite` section, and import it in `test/Main.hs`:
+Add the test module to the package's `.cabal` file under `other-modules` in the `test-suite` section, and import it in that package's `test/Main.hs`:
 
 ```haskell
 import qualified Test.MyFeature
@@ -113,10 +113,11 @@ Additional requirements:
 
 ## Project Structure Conventions
 
-- **Pure logic** goes in dedicated modules (`Conversation.hs`, `PromptAssembly.hs`)
-- **IO boundaries** are isolated in their own modules (`Storage.hs`, `LLMClient.hs`)
-- **Orchestration** stays in `AgentCore.hs`
-- **Types** are consolidated in `Types.hs`
+- **Pure logic** goes in dedicated modules (`Conversation.Core`, `LLM.PromptAssembly`, `Tools.Guardrails`, `Tools.Catalog`)
+- **IO boundaries** are isolated in their own modules (`Foundation.Storage`, `LLM.Client`, `Tools.Runtime`)
+- **Orchestration** stays in `Agent.Core`
+- **Shared types** are consolidated in `Foundation.Types`
+- **Package boundaries** reflect architectural concerns — if you're unsure which package a module belongs to, check the dependency graph in `docs/diagrams/architecture.md`
 
 When adding a feature, keep the pure/IO separation. If your feature has both pure logic and IO, split them into separate modules.
 

@@ -4,7 +4,8 @@ Pure message history management.
 
 All functions in this module are pure — no I/O operations. They operate on `AgentState` to manage the in-memory conversation history.
 
-**Module:** `Conversation` (`src/Conversation.hs`)
+**Module:** `Lumen.Conversation.Core` (`lumen-conversation-system/src/Lumen/Conversation/Core.hs`)  
+**Package:** `lumen-conversation-system`
 
 ## addMessage
 

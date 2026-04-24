@@ -4,7 +4,8 @@ Tool execution with safety validation.
 
 This module wires `Guardrails` validation to the `anthropic-tools-common` executors. It is the only IO-performing layer in the tool system — `Guardrails` and `ToolCatalog` are pure. Every tool use goes through `executeTool`, which parses the input, validates the action, and either executes it or returns an error result.
 
-**Module:** `ToolRuntime` (`src/ToolRuntime.hs`)
+**Module:** `Lumen.Tools.Runtime` (`lumen-tool-framework/src/Lumen/Tools/Runtime.hs`)  
+**Package:** `lumen-tool-framework`
 
 ## executeTool
 

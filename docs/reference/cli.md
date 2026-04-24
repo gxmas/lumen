@@ -85,10 +85,11 @@ Any other input is sent as a message to the Claude API.
 
 ```
 ===================================
-    Lumen Agent (Phase 1)
+    Lumen Agent (MVP)
 ===================================
 Model: claude-sonnet-4-20250514
 Conversation: default
+Tools: read_file, write_file, list_directory, search_files, execute_command
 
 Type 'quit' to exit
 ```

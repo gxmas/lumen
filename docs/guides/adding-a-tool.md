@@ -40,9 +40,10 @@ LLM returns stop_reason=tool_use
 
 ## The Three Modules You Touch
 
-### `src/ToolCatalog.hs` — Tool Registry
+### `Lumen.Tools.Catalog` — Tool Registry
+**File:** `lumen-tool-framework/src/Lumen/Tools/Catalog.hs`
 
-`ToolCatalog` exports two things used in every API request:
+`Tools.Catalog` exports two things used in every API request:
 
 - `allToolDefs :: [CustomToolDef]` — raw definitions for name-based lookup
 - `allTools :: [ToolDefinition]` — the same list wrapped for the API
@@ -69,9 +70,10 @@ myNewToolSchema = objectSchema
 
 The description is read by the LLM to decide when to invoke the tool and how to format the `input` JSON. Be specific about what the tool does, what each parameter means, and what the output looks like.
 
-### `src/Guardrails.hs` — Safety Validation
+### `Lumen.Tools.Guardrails` — Safety Validation
+**File:** `lumen-tool-framework/src/Lumen/Tools/Guardrails.hs`
 
-`Guardrails` exposes a typed `Action` ADT. Each tool use is first parsed into an `Action`, which is then validated against `SafetyConfig`. Validation is **pure** — no IO.
+`Tools.Guardrails` exposes a typed `Action` ADT. Each tool use is first parsed into an `Action`, which is then validated against `SafetyConfig`. Validation is **pure** — no IO.
 
 ```haskell
 -- Current Action type
@@ -87,9 +89,10 @@ validateAction :: Action -> SafetyConfig -> ValidationResult
 
 To add a new tool, you add a constructor to `Action` and a case to `validateAction`. For a tool that accesses files, reuse `isSafePath`. For tools that don't touch the filesystem, `Allowed` is sufficient.
 
-### `src/ToolRuntime.hs` — Execution
+### `Lumen.Tools.Runtime` — Execution
+**File:** `lumen-tool-framework/src/Lumen/Tools/Runtime.hs`
 
-`ToolRuntime` dispatches each validated `ToolUseBlock` to the appropriate executor. The `withValidation` helper handles the parse → validate → execute pipeline:
+`Tools.Runtime` dispatches each validated `ToolUseBlock` to the appropriate executor. The `withValidation` helper handles the parse → validate → execute pipeline:
 
 ```haskell
 executeTool :: SafetyConfig -> ToolUseBlock -> IO ToolResultBlock
@@ -150,10 +153,10 @@ myNewToolSchema = objectSchema
 
 ### Step 2: Write the tool definition
 
-Add `myNewToolDef :: CustomToolDef` to `src/ToolCatalog.hs` and add it to `allToolDefs`:
+Add `myNewToolDef :: CustomToolDef` to `lumen-tool-framework/src/Lumen/Tools/Catalog.hs` and add it to `allToolDefs`:
 
 ```haskell
--- src/ToolCatalog.hs
+-- lumen-tool-framework/src/Lumen/Tools/Catalog.hs
 
 import Anthropic.Protocol.Tool (CustomToolDef, customToolDef, withDescription)
 import Data.Function ((&))
@@ -179,10 +182,10 @@ The `allTools` export (used in API requests) is derived from `allToolDefs` autom
 
 ### Step 3: Add a typed Action constructor
 
-In `src/Guardrails.hs`, add a constructor to the `Action` type and a case to `validateAction`:
+In `lumen-tool-framework/src/Lumen/Tools/Guardrails.hs`, add a constructor to the `Action` type and a case to `validateAction`:
 
 ```haskell
--- src/Guardrails.hs
+-- lumen-tool-framework/src/Lumen/Tools/Guardrails.hs
 
 data Action
   = ReadFile !FilePath
@@ -219,10 +222,10 @@ If your tool doesn't touch the filesystem or run processes, `Allowed` is suffici
 
 ### Step 4: Add the action extractor and executor case
 
-In `src/ToolRuntime.hs`, add a `mk*Action` function and a case to `executeTool`:
+In `lumen-tool-framework/src/Lumen/Tools/Runtime.hs`, add a `mk*Action` function and a case to `executeTool`:
 
 ```haskell
--- src/ToolRuntime.hs
+-- lumen-tool-framework/src/Lumen/Tools/Runtime.hs
 
 -- Add to executeTool's case expression:
 executeTool :: SafetyConfig -> ToolUseBlock -> IO ToolResultBlock
@@ -264,7 +267,7 @@ The `withValidation` function handles the parse error and validation failure cas
 
 ### Step 5: Write property tests
 
-Add tests for the new action extractor in `test/Test/ToolRuntime.hs`:
+Add tests for the new action extractor in `lumen-agent-core/test/Test/ToolRuntime.hs`:
 
 ```haskell
 -- In Test.ToolRuntime.properties:
@@ -284,7 +287,7 @@ prop_mkMyNewAction_extracts_param = property $ do
       failure
 ```
 
-Add tests for the guardrails validation in `test/Test/Guardrails.hs`:
+Add tests for the guardrails validation in `lumen-agent-core/test/Test/Guardrails.hs`:
 
 ```haskell
 , testProperty "P5: MyNewAction with valid param is allowed"
@@ -296,7 +299,7 @@ prop_myNewAction_valid_allowed = property $ do
   validateAction (MyNewAction param) permissiveConfig === Allowed
 ```
 
-Generators for domain types (like `MyNewToolInput`) belong in `test/Test/Generators.hs`. Tool-specific generators (like `genToolUseBlock` for a specific tool) can live inline in the test module.
+Generators for domain types (like `MyNewToolInput`) belong in `lumen-agent-core/test/Test/Generators.hs`. Tool-specific generators (like `genToolUseBlock` for a specific tool) can live inline in the test module.
 
 ### Step 6: Verify
 
@@ -328,4 +331,4 @@ Then run the agent and ask it to use your new tool to confirm end-to-end behavio
 - [Architecture explanation](../explanation/architecture.md) — the pure/IO split and why `ToolRuntime` is an IO module
 - [Types reference](../reference/types.md) — `ValidationResult`, `SafetyConfig`
 - [Contributing guide](contributing.md) — full PR checklist, code style, test requirements
-- `anthropic-tools-common` — `Schema.hs` for input types, `Executor.hs` for execution helpers, `Parser.hs` for `parseToolInput`
+- `anthropic-tools-common` (at `../../libs/anthropic-tools-common`) — `Schema.hs` for input types, `Executor.hs` for execution helpers, `Parser.hs` for `parseToolInput`
