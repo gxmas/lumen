@@ -1,5 +1,12 @@
 packages:
-    .
+    lumen-runtime-foundation
+    lumen-llm-core
+    lumen-conversation-system
+    lumen-tool-framework
+    lumen-code-intelligence
+    lumen-external-integrations
+    lumen-planning
+    lumen-agent-core
     libs/anthropic-types
     libs/anthropic-protocol
     libs/anthropic-client

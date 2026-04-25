@@ -1,0 +1,73 @@
+cabal-version:      3.0
+name:               lumen-llm-core
+version:            0.1.0.0
+synopsis:           Lumen — LLM Core (Client, Prompt Assembly)
+description:        Anthropic API client and prompt assembly.
+                    Note: PromptAssembly currently imports from lumen-tool-framework
+                    and lumen-conversation-system. This will be cleaned up in Phase 3
+                    when assembleRequest is refactored to accept a PromptRequest.
+license:            MIT
+license-file:       LICENSE
+author:             Geoffrey Noël
+maintainer:         noel.geoff@gmail.com
+category:           Development
+build-type:         Simple
+
+common shared-properties
+    default-language: GHC2021
+    ghc-options:
+        -Wall
+        -Wcompat
+        -Widentities
+        -Wincomplete-record-updates
+        -Wincomplete-uni-patterns
+        -Wmissing-home-modules
+        -Wpartial-fields
+        -Wredundant-constraints
+        -Wunused-packages
+    default-extensions:
+        DerivingStrategies
+        DuplicateRecordFields
+        LambdaCase
+        OverloadedRecordDot
+        OverloadedStrings
+
+library
+    import:           shared-properties
+    hs-source-dirs:   src
+    exposed-modules:
+        Lumen.LLM.Client
+        Lumen.LLM.PromptAssembly
+    build-depends:
+        base >=4.18 && <5,
+        lumen-runtime-foundation,
+        lumen-conversation-system,
+        lumen-tool-framework,
+        anthropic-types,
+        anthropic-protocol,
+        anthropic-client,
+        text >=2.0
+
+test-suite lumen-llm-core-test
+    import:           shared-properties
+    type:             exitcode-stdio-1.0
+    hs-source-dirs:   test
+    main-is:          Main.hs
+    other-modules:
+        Test.PromptAssembly
+    build-depends:
+        base >=4.18 && <5,
+        lumen-runtime-foundation,
+        lumen-runtime-foundation:lumen-test-generators,
+        lumen-conversation-system,
+        lumen-llm-core,
+        hedgehog >=1.4,
+        tasty >=1.4,
+        tasty-hedgehog >=1.4,
+        anthropic-types,
+        anthropic-protocol,
+        text >=2.0
+    ghc-options:
+        -threaded
+        -rtsopts
+        -with-rtsopts=-N

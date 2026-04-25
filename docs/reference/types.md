@@ -4,7 +4,8 @@ Core data types shared across the Lumen agent.
 
 This module consolidates all data types used across the agent: configuration, state, storage formats, and validation results. It also re-exports key types from the `anthropic-types` and `anthropic-protocol` libraries.
 
-**Module:** `Types` (`src/Types.hs`)
+**Module:** `Lumen.Foundation.Types` (`lumen-runtime-foundation/src/Lumen/Foundation/Types.hs`)  
+**Package:** `lumen-runtime-foundation`
 
 ## AgentConfig
 

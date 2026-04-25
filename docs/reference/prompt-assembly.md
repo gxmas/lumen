@@ -4,7 +4,8 @@ Request construction for the LLM API.
 
 This module builds `MessageRequest` values from the current agent state, assembling the model, messages, token limit, and system prompt into a request ready to send.
 
-**Module:** `PromptAssembly` (`src/PromptAssembly.hs`)
+**Module:** `Lumen.LLM.PromptAssembly` (`lumen-llm-core/src/Lumen/LLM/PromptAssembly.hs`)  
+**Package:** `lumen-llm-core`
 
 ## assembleRequest
 
@@ -32,6 +33,8 @@ assembleRequest :: AgentState -> MessageRequest
 **Note:** This is a pure function — it does not perform any IO.
 
 **Tool injection:** `withTools allTools` adds the 5 tool definitions (`read_file`, `write_file`, `list_directory`, `search_files`, `execute_command`) to every request. This tells Claude which tools are available and provides their input schemas. Without this step, the model would not produce `tool_use` blocks.
+
+**Note on coupling:** `assembleRequest` currently imports `allTools` directly from `Lumen.Tools.Catalog`, which creates a dependency from `lumen-llm-core` on `lumen-tool-framework`. This is a known temporary coupling that will be removed in Phase 3 when `assembleRequest` is refactored to accept a `PromptRequest` value object containing the tool list.
 
 ## defaultSystemPrompt
 

@@ -4,7 +4,8 @@ Safety validation for tool actions.
 
 This module defines the `Action` type that classifies what a tool wants to do, and the validation logic that decides whether each action is permitted. All validation is pure — no IO occurs here. `ToolRuntime` calls into `Guardrails` before dispatching to any executor.
 
-**Module:** `Guardrails` (`src/Guardrails.hs`)
+**Module:** `Lumen.Tools.Guardrails` (`lumen-tool-framework/src/Lumen/Tools/Guardrails.hs`)  
+**Package:** `lumen-tool-framework`
 
 ## Action
 

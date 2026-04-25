@@ -1,0 +1,79 @@
+cabal-version:      3.0
+name:               lumen-agent-core
+version:            0.1.0.0
+synopsis:           Lumen — Agent Core (main loop, orchestration, CLI)
+description:        Top-level orchestration: REPL loop, tool execution, response routing.
+license:            MIT
+license-file:       LICENSE
+author:             Geoffrey Noël
+maintainer:         noel.geoff@gmail.com
+category:           Development
+build-type:         Simple
+
+common shared-properties
+    default-language: GHC2021
+    ghc-options:
+        -Wall
+        -Wcompat
+        -Widentities
+        -Wincomplete-record-updates
+        -Wincomplete-uni-patterns
+        -Wmissing-home-modules
+        -Wpartial-fields
+        -Wredundant-constraints
+        -Wunused-packages
+    default-extensions:
+        DerivingStrategies
+        DuplicateRecordFields
+        LambdaCase
+        OverloadedRecordDot
+        OverloadedStrings
+
+library
+    import:           shared-properties
+    hs-source-dirs:   src
+    exposed-modules:
+        Lumen.Agent.Core
+    build-depends:
+        base >=4.18 && <5,
+        lumen-runtime-foundation,
+        lumen-llm-core,
+        lumen-conversation-system,
+        lumen-tool-framework,
+        anthropic-types,
+        anthropic-protocol,
+        text >=2.0
+
+executable lumen
+    import:           shared-properties
+    main-is:          Main.hs
+    hs-source-dirs:   app
+    build-depends:
+        base >=4.18 && <5,
+        lumen-runtime-foundation,
+        lumen-llm-core,
+        lumen-agent-core,
+        text >=2.0
+    ghc-options:
+        -threaded
+        -rtsopts
+        -with-rtsopts=-N
+
+test-suite lumen-test
+    import:           shared-properties
+    type:             exitcode-stdio-1.0
+    hs-source-dirs:   test
+    main-is:          Main.hs
+    other-modules:
+        Test.AgentCore
+    build-depends:
+        base >=4.18 && <5,
+        lumen-agent-core,
+        hedgehog >=1.4,
+        tasty >=1.4,
+        tasty-hedgehog >=1.4,
+        text >=2.0
+    ghc-options:
+        -threaded
+        -rtsopts
+        -with-rtsopts=-N

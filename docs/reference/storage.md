@@ -4,7 +4,8 @@ JSON persistence for conversation history.
 
 This module handles saving and loading conversations to and from disk as JSON files. Each conversation is stored in its own file under `~/.lumen/conversations/`.
 
-**Module:** `Storage` (`src/Storage.hs`)
+**Module:** `Lumen.Foundation.Storage` (`lumen-runtime-foundation/src/Lumen/Foundation/Storage.hs`)  
+**Package:** `lumen-runtime-foundation`
 
 ## saveConversation
 

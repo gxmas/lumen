@@ -4,10 +4,14 @@ How to run, configure, and interpret Lumen's property-based test suite.
 
 ## Running Tests
 
+Tests live in their respective packages. Run them all at once or package by package.
+
 ### Quick Run (Default)
 
 ```bash
-cabal test
+make test
+# or directly:
+cabal test all
 ```
 
 Runs all 110 properties across 12 test modules with 100 random inputs each. Takes a few seconds.
@@ -15,7 +19,9 @@ Runs all 110 properties across 12 test modules with 100 random inputs each. Take
 ### Verbose Output
 
 ```bash
-cabal test --test-show-details=streaming
+make test-verbose
+# or:
+cabal test all --test-show-details=streaming
 ```
 
 Shows each property name and result as it runs, rather than a summary at the end.
@@ -23,7 +29,9 @@ Shows each property name and result as it runs, rather than a summary at the end
 ### Comprehensive Run
 
 ```bash
-cabal test --test-options="--hedgehog-tests 10000"
+make test-full
+# or:
+cabal test all --test-options="--hedgehog-tests 10000"
 ```
 
 Runs 10,000 random inputs per property. This is what CI runs on pushes to `main`. Takes longer but provides much higher confidence.
@@ -36,31 +44,29 @@ make test-verbose  # streaming output
 make test-full     # 10,000 iterations (CI-level)
 ```
 
-## Running Specific Test Groups
-
-Filter by test group name using `--pattern`:
+### Running a Single Package's Tests
 
 ```bash
-cabal test --test-options="--pattern Guardrails"
-cabal test --test-options="--pattern ToolRuntime"
-cabal test --test-options="--pattern SchemaInputs"
-cabal test --test-options="--pattern OrderedMap"
-cabal test --test-options="--pattern Conversation"
-cabal test --test-options="--pattern Types"
-cabal test --test-options="--pattern PromptAssembly"
-cabal test --test-options="--pattern AgentCore"
-```
+cabal test lumen-tool-framework-testcabal test lumen-runtime-foundation-testcabal test lumen-conversation-system-testcabal test lumen-llm-core-testcabal test lumen-test```
 
-The pattern matches against the test group name in the Tasty tree.
+## Running Specific Test Groups
+
+Filter by test group name using `--pattern` (applies within the selected test suite):
+
+```bash
+cabal test lumen-tool-framework-test --test-options="--pattern Guardrails"
+cabal test lumen-tool-framework-test --test-options="--pattern ToolRuntime"
+cabal test lumen-runtime-foundation-test --test-options="--pattern Types"
+```
 
 ## Adjusting Iteration Count
 
 The `--hedgehog-tests` option controls how many random inputs each property receives:
 
 ```bash
-cabal test --test-options="--hedgehog-tests 100"    # fast, default
-cabal test --test-options="--hedgehog-tests 1000"   # moderate
-cabal test --test-options="--hedgehog-tests 10000"  # thorough (CI)
+cabal test all --test-options="--hedgehog-tests 100"    # fast, default
+cabal test all --test-options="--hedgehog-tests 1000"   # moderate
+cabal test all --test-options="--hedgehog-tests 10000"  # thorough (CI)
 ```
 
 Higher counts catch rarer edge cases but take longer. For local development, 100 is usually sufficient. Run 10,000 before merging.
@@ -90,22 +96,22 @@ Hedgehog shows the **shrunk** input — the smallest input that still triggers t
 
 ## Test Organization
 
-Tests live in `test/Test/` with one module per source module (or library component). Shared generators for domain types live in `test/Test/Generators.hs`. Tool-specific generators are defined inline in each test module.
+Each package has its own test suite. Shared generators for domain types live in the `lumen-test-generators` sub-library of `lumen-runtime-foundation` (`test-support/Test/Generators.hs`). Tool-specific generators (e.g. `genToolUseBlock`) are defined inline in each test module.
 
-| Test Module | Source / Component | Category | Properties |
+| Test Module | Package / Test Suite | Category | Properties |
 |---|---|---|---|
-| `Test.Conversation` | `Conversation` | CRITICAL | 12 |
-| `Test.Types` | `Types` | CRITICAL | 5 |
-| `Test.PromptAssembly` | `PromptAssembly` | STANDARD | 6 |
-| `Test.AgentCore` | `AgentCore` | MINIMAL | 8 |
-| `Test.Storage` | `Storage` | MINIMAL | 4 |
-| `Test.ToolCatalog` | `ToolCatalog` | STANDARD | 5 |
-| `Test.Guardrails` | `Guardrails` | CRITICAL | 10 |
-| `Test.GuardrailsHelpers` | `Guardrails` (internals) | CRITICAL | 9 |
-| `Test.ToolRuntime` | `ToolRuntime` | CRITICAL | 9 |
-| `Test.SchemaInputs` | `anthropic-tools-common Schema` | CRITICAL | 7 |
-| `Test.OrderedMap` | `json-schema OrderedMap` | STANDARD | 16 |
-| `Test.SchemaSerialization` | `json-schema encode/decode` | CRITICAL | 19 |
+| `Test.Types` | `lumen-runtime-foundation-test` | CRITICAL | 5 |
+| `Test.Storage` | `lumen-runtime-foundation-test` | MINIMAL | 4 |
+| `Test.Conversation` | `lumen-conversation-system-test` | CRITICAL | 12 |
+| `Test.Guardrails` | `lumen-tool-framework-test` | CRITICAL | 10 |
+| `Test.GuardrailsHelpers` | `lumen-tool-framework-test` | CRITICAL | 9 |
+| `Test.ToolCatalog` | `lumen-tool-framework-test` | STANDARD | 5 |
+| `Test.ToolRuntime` | `lumen-tool-framework-test` | CRITICAL | 9 |
+| `Test.SchemaInputs` | `lumen-tool-framework-test` | CRITICAL | 7 |
+| `Test.OrderedMap` | `lumen-tool-framework-test` | STANDARD | 16 |
+| `Test.SchemaSerialization` | `lumen-tool-framework-test` | CRITICAL | 19 |
+| `Test.PromptAssembly` | `lumen-llm-core-test` | STANDARD | 6 |
+| `Test.AgentCore` | `lumen-test` | MINIMAL | 8 |
 | **Total** | | | **110** |
 
 ## Test Categories

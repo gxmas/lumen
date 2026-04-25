@@ -4,7 +4,8 @@ REPL loop orchestration.
 
 This module coordinates the main agent loop: initialize, then repeatedly run turns until the user quits. It ties together all other modules.
 
-**Module:** `AgentCore` (`src/AgentCore.hs`)
+**Module:** `Lumen.Agent.Core` (`lumen-agent-core/src/Lumen/Agent/Core.hs`)  
+**Package:** `lumen-agent-core`
 
 ## initialize
 

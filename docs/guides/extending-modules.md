@@ -8,7 +8,7 @@ This guide explains how to grow Lumen by adding new modules or enhancing existin
 
 ## The Mental Model
 
-Lumen's full target architecture has 19 modules, documented in `~/Projects/design/lumen/design/architecture.md`. The current codebase implements 6 of them (Phase 0). Each subsequent phase adds new modules or upgrades simplified ones to their full contracts.
+Lumen's full target architecture has 19 modules, documented in `~/Projects/design/lumen/design/architecture.md`. The current codebase implements 9 of them (the MVP). Each subsequent phase adds new modules or upgrades simplified ones to their full contracts.
 
 The key principle: **the architecture document is your map, not your build plan.** You extract the relevant section from it, run it through a technical design step and a construction planning step, then implement. You do not redesign the architecture each time.
 
@@ -55,13 +55,15 @@ Use this when you want a capability that has no current code at all.
 5. **Run `/construction-planning`.** This takes the technical design plus the existing codebase and produces a step-by-step build order with integration instructions. The output is a new `phase1-construction-plan.md`.
 
 6. **Implement.** Follow the construction plan. For a new module:
-   - Create `src/Memory.hs` (or a subdirectory if it has sub-modules).
-   - Add it to `exposed-modules` in `lumen.cabal`.
-   - Add generators to `test/Test/Generators.hs`.
-   - Create `test/Test/Memory.hs` with Hedgehog properties.
-   - Add to `other-modules` in `lumen.cabal` and import in `test/Main.hs`.
+   - Determine which package it belongs to, or create a new package (e.g., `lumen-memory/`).
+   - Create the module file (e.g., `lumen-memory/src/Lumen/Memory/Core.hs`).
+   - Add it to `exposed-modules` in the package's `.cabal` file.
+   - If a new package: add it to `cabal.project` and add the dependency to `lumen-agent-core.cabal`.
+   - Add generators to `lumen-agent-core/test/Test/Generators.hs`.
+   - Create `lumen-agent-core/test/Test/Memory.hs` with Hedgehog properties.
+   - Add to `other-modules` in `lumen-agent-core.cabal` and import in `test/Main.hs`.
 
-7. **Integrate.** Connect the new module to `AgentCore`. New domain modules are typically called from `AgentCore.initialize` (to load state) and from `AgentCore.runTurn` or `AgentCore.mainLoop` (to use the capability mid-conversation).
+7. **Integrate.** Connect the new module to `Agent.Core`. New domain modules are typically called from `Agent.Core.initialize` (to load state) and from `Agent.Core.runTurn` or `Agent.Core.mainLoop` (to use the capability mid-conversation).
 
 8. **Verify.**
 
@@ -141,18 +143,18 @@ The technical design output (`phase1-technical-design.md`) will specify:
 
 The construction plan will specify:
 
-1. Add `MemoryRecord`, `MemoryType`, `MemoryId` to `src/Types.hs`
-2. Create `src/Memory.hs` with `save`, `retrieve`, `search`, `update`, `delete`
-3. Update `Storage.hs` to create `~/.lumen/memory/` directory alongside conversations
-4. Update `AgentCore.initialize` to load relevant memories at startup
-5. Update `AgentCore.runTurn` (or `PromptAssembly.assembleRequest`) to include memory context in the system prompt
+1. Add `MemoryRecord`, `MemoryType`, `MemoryId` to `Lumen.Foundation.Types`
+2. Create a new package `lumen-memory/` with `Lumen.Memory.Core` exposing `save`, `retrieve`, `search`, `update`, `delete`
+3. Update `Lumen.Foundation.Storage` to create `~/.lumen/memory/` directory alongside conversations
+4. Update `Lumen.Agent.Core.initialize` to load relevant memories at startup
+5. Update `Lumen.Agent.Core.runTurn` (or `Lumen.LLM.PromptAssembly.assembleRequest`) to include memory context in the system prompt
 
 ### 5. Implement
 
 ```haskell
--- src/Memory.hs
+-- lumen-memory/src/Lumen/Memory/Core.hs
 
-module Memory
+module Lumen.Memory.Core
   ( save
   , retrieve
   , search
@@ -161,7 +163,7 @@ module Memory
   , getProjectContext
   ) where
 
-import Types (MemoryRecord (..), MemoryType (..), AgentConfig (..))
+import Lumen.Foundation.Types (MemoryRecord (..), MemoryType (..), AgentConfig (..))
 
 save :: MemoryRecord -> IO ()
 save record = do
@@ -185,33 +187,38 @@ search query = do
   ...
 ```
 
-Add the module to `lumen.cabal`:
+Add the new package to `cabal.project`:
+
+```
+packages:
+    ...
+    lumen-memory        -- add here
+    ...
+```
+
+Add the dependency to `lumen-agent-core.cabal`:
 
 ```cabal
 library
-  exposed-modules:
-    Types
-    Conversation
-    Storage
-    Memory           -- add here
-    LLMClient
-    PromptAssembly
-    AgentCore
+    build-depends:
+        ...
+        lumen-memory,   -- add here
+        ...
 ```
 
 ### 6. Integrate
 
-In `AgentCore.initialize`:
+In `Lumen.Agent.Core.initialize`:
 
 ```haskell
 initialize :: AgentConfig -> IO AgentState
 initialize config = do
   mbConv <- loadConversation config.conversationId
-  memories <- Memory.search ""   -- load all on startup; or load selectively
+  memories <- Memory.Core.search ""   -- load all on startup; or load selectively
   -- ... rest of initialization
 ```
 
-In `PromptAssembly.assembleRequest`, pass memories into the system prompt or as additional context.
+In `Lumen.LLM.PromptAssembly.assembleRequest`, pass memories into the system prompt or as additional context.
 
 ---
 
@@ -221,7 +228,7 @@ Following Pattern B.
 
 ### 1. Current state
 
-`Storage.hs` exports:
+`Lumen.Foundation.Storage` (`lumen-runtime-foundation/src/Lumen/Foundation/Storage.hs`) exports:
 ```haskell
 saveConversation    :: AgentState -> IO ()
 loadConversation    :: Text -> IO (Maybe ConversationFile)
@@ -311,12 +318,13 @@ Before starting implementation:
 
 During implementation:
 
-- [ ] New types added to `src/Types.hs` (or to the module's own file if not shared)
-- [ ] New module added to `exposed-modules` in `lumen.cabal`
-- [ ] Generators added to `test/Test/Generators.hs`
-- [ ] Properties written in `test/Test/<ModuleName>.hs`
-- [ ] Test module added to `other-modules` in `lumen.cabal`
-- [ ] Test module imported in `test/Main.hs`
+- [ ] New types added to `Lumen.Foundation.Types` (or to the module's own file if not shared)
+- [ ] New module added to `exposed-modules` in the package's `.cabal` file
+- [ ] New package (if any) added to `cabal.project` and as a dependency in `lumen-agent-core.cabal`
+- [ ] Generators added to `lumen-agent-core/test/Test/Generators.hs`
+- [ ] Properties written in `lumen-agent-core/test/Test/<ModuleName>.hs`
+- [ ] Test module added to `other-modules` in `lumen-agent-core.cabal`
+- [ ] Test module imported in `lumen-agent-core/test/Main.hs`
 
 After implementation:
 

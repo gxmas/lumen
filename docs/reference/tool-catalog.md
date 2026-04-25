@@ -4,7 +4,8 @@ Tool registry for the Lumen agent.
 
 This module wraps the pre-built tool definitions from `anthropic-tools-common` and exposes them as a single list for injection into API requests. It is the only place in the codebase that enumerates which tools the agent offers.
 
-**Module:** `ToolCatalog` (`src/ToolCatalog.hs`)
+**Module:** `Lumen.Tools.Catalog` (`lumen-tool-framework/src/Lumen/Tools/Catalog.hs`)  
+**Package:** `lumen-tool-framework`
 
 ## allTools
 

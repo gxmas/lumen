@@ -106,7 +106,7 @@ cabal test                                        # 100 iterations per property 
 cabal test --test-show-details=streaming           # with verbose output
 cabal test --test-options="--hedgehog-tests 1000"  # 1,000 iterations
 cabal test --test-options="--hedgehog-tests 10000" # 10,000 iterations (CI-level)
-cabal test --test-options="--pattern Conversation" # run one test group
+cabal test --test-options="--pattern Guardrails"   # run one test group
 ```
 
 Or via Make:
@@ -130,12 +130,19 @@ See `.github/workflows/ci.yml` for the full configuration.
 
 ## Test Count Summary
 
-**31 properties across 5 modules:**
+**110 properties across 12 test modules:**
 
-| Module | Category | Properties |
-|--------|----------|------------|
-| Conversation | CRITICAL | 12 |
-| Types | CRITICAL | 5 |
-| PromptAssembly | STANDARD | 5 |
-| AgentCore | MINIMAL | 5 |
-| Storage | MINIMAL | 4 |
+| Test Module | Source / Component | Category | Properties |
+|-------------|-------------------|----------|------------|
+| `Test.Conversation` | `Conversation.Core` | CRITICAL | 12 |
+| `Test.Types` | `Foundation.Types` | CRITICAL | 5 |
+| `Test.Guardrails` | `Tools.Guardrails` | CRITICAL | 10 |
+| `Test.GuardrailsHelpers` | `Tools.Guardrails` (internals) | CRITICAL | 9 |
+| `Test.ToolRuntime` | `Tools.Runtime` | CRITICAL | 9 |
+| `Test.SchemaInputs` | `anthropic-tools-common` Schema | CRITICAL | 7 |
+| `Test.SchemaSerialization` | `json-schema-combinators` | CRITICAL | 19 |
+| `Test.PromptAssembly` | `LLM.PromptAssembly` | STANDARD | 6 |
+| `Test.ToolCatalog` | `Tools.Catalog` | STANDARD | 5 |
+| `Test.OrderedMap` | `json-schema-combinators` OrderedMap | STANDARD | 16 |
+| `Test.AgentCore` | `Agent.Core` | MINIMAL | 8 |
+| `Test.Storage` | `Foundation.Storage` | MINIMAL | 4 |

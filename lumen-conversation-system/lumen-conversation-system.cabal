@@ -1,0 +1,59 @@
+cabal-version:      3.0
+name:               lumen-conversation-system
+version:            0.1.0.0
+synopsis:           Lumen — Conversation System (Core)
+description:        Multi-turn dialogue management. Phase 1: Conversation.Core only.
+license:            MIT
+license-file:       LICENSE
+author:             Geoffrey Noël
+maintainer:         noel.geoff@gmail.com
+category:           Development
+build-type:         Simple
+
+common shared-properties
+    default-language: GHC2021
+    ghc-options:
+        -Wall
+        -Wcompat
+        -Widentities
+        -Wincomplete-record-updates
+        -Wincomplete-uni-patterns
+        -Wmissing-home-modules
+        -Wpartial-fields
+        -Wredundant-constraints
+        -Wunused-packages
+    default-extensions:
+        DerivingStrategies
+        DuplicateRecordFields
+        LambdaCase
+        OverloadedRecordDot
+        OverloadedStrings
+
+library
+    import:           shared-properties
+    hs-source-dirs:   src
+    exposed-modules:
+        Lumen.Conversation.Core
+    build-depends:
+        base >=4.18 && <5,
+        lumen-runtime-foundation
+
+test-suite lumen-conversation-system-test
+    import:           shared-properties
+    type:             exitcode-stdio-1.0
+    hs-source-dirs:   test
+    main-is:          Main.hs
+    other-modules:
+        Test.Conversation
+    build-depends:
+        base >=4.18 && <5,
+        lumen-runtime-foundation,
+        lumen-runtime-foundation:lumen-test-generators,
+        lumen-conversation-system,
+        hedgehog >=1.4,
+        tasty >=1.4,
+        tasty-hedgehog >=1.4
+    ghc-options:
+        -threaded
+        -rtsopts
+        -with-rtsopts=-N

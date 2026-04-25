@@ -1,8 +1,8 @@
 # Lumen Documentation
 
-Lumen is a conversational AI agent built in Haskell with Claude API integration. It provides a text-based REPL with persistent conversation history and tool execution capabilities.
+Lumen is an AI coding agent built in Haskell with Claude API integration. It provides a terminal REPL with persistent conversation history, tool execution (read/write files, run shell commands, search files), and safety guardrails.
 
-**Current phase:** MVP (conversation with tool execution)
+**Current status:** MVP complete — multi-turn conversation, 5 tools, JSON persistence.
 
 ## Start Here
 
